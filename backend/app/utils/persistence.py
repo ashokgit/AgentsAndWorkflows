@@ -31,12 +31,18 @@ def load_data_from_disk():
     if WORKFLOWS_FILE.exists():
         try:
             workflows_json = json.loads(WORKFLOWS_FILE.read_text())
-            for workflow_dict in workflows_json:
-                workflow = Workflow.parse_obj(workflow_dict)
-                workflows_db[workflow.id] = workflow
+            # The workflows are stored as a dictionary with workflow IDs as keys
+            if isinstance(workflows_json, dict):
+                for workflow_id, workflow_dict in workflows_json.items():
+                    workflows_db[workflow_id] = Workflow.parse_obj(workflow_dict)
+            # For backward compatibility with older format (if it was an array)
+            elif isinstance(workflows_json, list):
+                for workflow_dict in workflows_json:
+                    workflow = Workflow.parse_obj(workflow_dict)
+                    workflows_db[workflow.id] = workflow
             logger.info(f"Loaded {len(workflows_db)} workflows from disk")
         except Exception as e:
-            logger.error(f"Error loading workflows from disk: {e}")
+            logger.error(f"Error loading workflows from disk: {e}", exc_info=True)
     
     # Load webhook mappings
     if WEBHOOKS_FILE.exists():
@@ -59,12 +65,12 @@ def save_workflows_to_disk():
     try:
         workflows_json = {}
         for wf_id, workflow in workflows_db.items():
-            workflows_json[wf_id] = workflow.model_dump()
+            workflows_json[wf_id] = workflow.dict()
         
         WORKFLOWS_FILE.write_text(json.dumps(workflows_json, indent=2, default=str))
         logger.info(f"Saved {len(workflows_db)} workflows to disk")
     except Exception as e:
-        logger.error(f"Error saving workflows to disk: {e}")
+        logger.error(f"Error saving workflows to disk: {e}", exc_info=True)
 
 def save_webhooks_to_disk():
     """Save webhook mappings to disk"""
