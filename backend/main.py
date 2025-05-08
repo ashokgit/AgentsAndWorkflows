@@ -12,11 +12,21 @@ import uuid
 from sse_starlette.sse import EventSourceResponse
 import os
 from litellm import completion as litellm_completion # Use alias to avoid name clash
+from datetime import datetime, timezone
+import pathlib
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Mini Workflow Engine Backend")
+
+# Create data directory if it doesn't exist
+DATA_DIR = pathlib.Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+
+WORKFLOWS_FILE = DATA_DIR / "workflows.json"
+WEBHOOKS_FILE = DATA_DIR / "webhooks.json"
+WEBHOOK_PAYLOADS_FILE = DATA_DIR / "webhook_payloads.json"
 
 # --- SSE Stream Management ---
 # Dictionary to hold asyncio Queues for active SSE streams, keyed by run_id
@@ -99,6 +109,25 @@ class Workflow(BaseModel):
     edges: List[Edge]
     # We might store viewport info etc. from the frontend too
     metadata: Optional[Dict[str, Any]] = None
+    
+    class Config:
+        # Allow arbitrary types for data fields
+        arbitrary_types_allowed = True
+        
+        # Custom JSON encoders
+        json_encoders = {
+            datetime: lambda dt: dt.isoformat(),
+        }
+    
+    def dict(self, **kwargs):
+        """Custom dict method to handle nested serialization"""
+        result = super().dict(**kwargs)
+        return result
+        
+    @classmethod
+    def parse_obj(cls, obj):
+        """Custom parse method to handle nested deserialization"""
+        return super().parse_obj(obj)
 
 class NodeExecutionResult(BaseModel):
     output: Any
@@ -109,6 +138,70 @@ class NodeExecutionResult(BaseModel):
 workflows_db: Dict[str, Workflow] = {}
 workflow_runs: Dict[str, List[Dict]] = {} # workflow_id -> list of run logs
 
+# Mapping of webhook_id to node_id and workflow_id
+webhook_mapping: Dict[str, Dict[str, str]] = {}
+# Store for webhook payloads: webhook_id -> last_payload
+webhook_payloads: Dict[str, Any] = {}
+
+# --- Persistence functions ---
+def load_data_from_disk():
+    """Load data from disk on startup"""
+    global workflows_db, webhook_mapping, webhook_payloads
+    
+    # Load workflows
+    if WORKFLOWS_FILE.exists():
+        try:
+            workflows_json = json.loads(WORKFLOWS_FILE.read_text())
+            for workflow_dict in workflows_json:
+                workflow = Workflow.parse_obj(workflow_dict)
+                workflows_db[workflow.id] = workflow
+            logger.info(f"Loaded {len(workflows_db)} workflows from disk")
+        except Exception as e:
+            logger.error(f"Error loading workflows from disk: {e}")
+    
+    # Load webhook mappings
+    if WEBHOOKS_FILE.exists():
+        try:
+            webhook_mapping = json.loads(WEBHOOKS_FILE.read_text())
+            logger.info(f"Loaded {len(webhook_mapping)} webhook mappings from disk")
+        except Exception as e:
+            logger.error(f"Error loading webhook mappings from disk: {e}")
+    
+    # Load webhook payloads
+    if WEBHOOK_PAYLOADS_FILE.exists():
+        try:
+            webhook_payloads = json.loads(WEBHOOK_PAYLOADS_FILE.read_text())
+            logger.info(f"Loaded {len(webhook_payloads)} webhook payloads from disk")
+        except Exception as e:
+            logger.error(f"Error loading webhook payloads from disk: {e}")
+
+def save_workflows_to_disk():
+    """Save workflows to disk"""
+    try:
+        workflows_json = [workflow.dict() for workflow in workflows_db.values()]
+        WORKFLOWS_FILE.write_text(json.dumps(workflows_json, indent=2, default=str))
+        logger.info(f"Saved {len(workflows_db)} workflows to disk")
+    except Exception as e:
+        logger.error(f"Error saving workflows to disk: {e}")
+
+def save_webhooks_to_disk():
+    """Save webhook mappings to disk"""
+    try:
+        WEBHOOKS_FILE.write_text(json.dumps(webhook_mapping, indent=2, default=str))
+        logger.info(f"Saved {len(webhook_mapping)} webhook mappings to disk")
+    except Exception as e:
+        logger.error(f"Error saving webhook mappings to disk: {e}")
+
+def save_webhook_payloads_to_disk():
+    """Save webhook payloads to disk"""
+    try:
+        WEBHOOK_PAYLOADS_FILE.write_text(json.dumps(webhook_payloads, indent=2, default=str))
+        logger.info(f"Saved {len(webhook_payloads)} webhook payloads to disk")
+    except Exception as e:
+        logger.error(f"Error saving webhook payloads to disk: {e}")
+
+# Load data on startup
+load_data_from_disk()
 
 # --- Node Execution Logic (Placeholders/Registry) ---
 # We'll move this to separate files and make it dynamic
@@ -122,10 +215,25 @@ def execute_node(node: Node, input_data: Any, workflow: Workflow) -> NodeExecuti
     node_data = node.data
 
     try:
-        if node_type == 'input' or node_type == 'webhook':
+        if node_type == 'input' or node_type == 'trigger':
             output_data = input_data 
             logger.info(f"Node {node.id} ({node_type}) passing data: {output_data}")
         
+        elif node_type == 'webhook_trigger':
+            # If it's a webhook trigger node, use the last received payload
+            webhook_id = node_data.get('webhook_id')
+            if webhook_id and webhook_id in webhook_payloads:
+                output_data = webhook_payloads[webhook_id]
+                logger.info(f"Webhook Trigger Node {node.id}: Using stored payload from webhook {webhook_id}")
+            else:
+                # If no webhook data yet, use input data or provide a placeholder
+                output_data = node_data.get('last_payload', input_data)
+                if not output_data:
+                    output_data = {"message": "No webhook data received yet"}
+                    logger.warning(f"Webhook Trigger Node {node.id}: No data available")
+                else:
+                    logger.info(f"Webhook Trigger Node {node.id}: Using last payload from node data")
+
         elif node_type == 'llm':
             # Check if this node references a model configuration
             model_config_id = node_data.get('model_config_id')
@@ -299,6 +407,7 @@ def read_root():
 def save_workflow(workflow: Workflow):
     logger.info(f"Saving workflow: {workflow.id} - {workflow.name}")
     workflows_db[workflow.id] = workflow
+    save_workflows_to_disk()
     return {"message": "Workflow saved successfully", "workflow_id": workflow.id}
 
 @app.get("/api/workflows/{workflow_id}")
@@ -505,14 +614,61 @@ async def get_workflow_runs(workflow_id: str):
     runs = workflow_runs.get(workflow_id, [])
     return runs # Returns list of *completed* run logs, newest first
 
-# Placeholder for webhook trigger node
-# In a real app, this would need a persistent way to map URLs to workflows
+# --- Webhook handling ---
+
+class WebhookRegistration(BaseModel):
+    workflow_id: str
+    node_id: str
+
+@app.post("/api/webhooks/register")
+async def register_webhook(registration: WebhookRegistration):
+    """Register a webhook and generate a unique ID for it"""
+    webhook_id = str(uuid.uuid4())
+    webhook_mapping[webhook_id] = {
+        "workflow_id": registration.workflow_id,
+        "node_id": registration.node_id,
+        "created_at": datetime.now().isoformat()
+    }
+    logger.info(f"Registered webhook {webhook_id} for workflow {registration.workflow_id}, node {registration.node_id}")
+    save_webhooks_to_disk()
+    return {"webhook_id": webhook_id}
+
 @app.post("/webhooks/{webhook_id}")
-def handle_webhook(webhook_id: str, data: Dict[str, Any]):
-    logger.info(f"Webhook received for ID: {webhook_id} with data: {data}")
-    # TODO: Find workflow associated with webhook_id and trigger run_workflow
-    # This requires a mapping mechanism (e.g., in DB)
-    return {"message": "Webhook received (processing not implemented yet)"}
+async def handle_webhook(webhook_id: str, request: Request):
+    """Handle an incoming webhook"""
+    logger.info(f"Webhook received for ID: {webhook_id}")
+    
+    if webhook_id not in webhook_mapping:
+        raise HTTPException(status_code=404, detail=f"Webhook ID {webhook_id} not found")
+    
+    # Parse the incoming JSON payload
+    try:
+        payload = await request.json()
+    except Exception as e:
+        logger.error(f"Error parsing webhook payload: {e}")
+        payload = {"error": "Failed to parse JSON payload"}
+    
+    # Store the payload
+    webhook_payloads[webhook_id] = payload
+    
+    # Get the mapping info
+    mapping = webhook_mapping[webhook_id]
+    workflow_id = mapping["workflow_id"]
+    node_id = mapping["node_id"]
+    
+    # Update the node's data in the workflow with the new payload
+    if workflow_id in workflows_db:
+        workflow = workflows_db[workflow_id]
+        for node in workflow.nodes:
+            if node.id == node_id:
+                if "last_payload" not in node.data:
+                    node.data["last_payload"] = {}
+                node.data["last_payload"] = payload
+                logger.info(f"Updated node {node_id} with webhook payload")
+                break
+    
+    save_webhook_payloads_to_disk()
+    return {"message": "Webhook received successfully", "payload": payload}
 
 @app.post("/api/model_config/test")
 async def test_model_config(model_config: Dict[str, Any]):
@@ -573,15 +729,4 @@ async def test_model_config(model_config: Dict[str, Any]):
 
 if __name__ == "__main__":
     print("Starting Mini Workflow Engine Backend...")
-    # Allow CORS for frontend development (adjust in production)
-    from fastapi.middleware.cors import CORSMiddleware
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"], # Or specify your frontend URL e.g., "http://localhost:3000"
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True) 

@@ -38,6 +38,7 @@ import NotesIcon from '@mui/icons-material/Notes'; // Default/Log
 import SmartToyIcon from '@mui/icons-material/SmartToy'; // LLM
 import CodeIcon from '@mui/icons-material/Code';
 import SendIcon from '@mui/icons-material/Send'; // Webhook Action
+import WebhookIcon from '@mui/icons-material/Webhook'; // Webhook Trigger
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SaveIcon from '@mui/icons-material/Save';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
@@ -50,6 +51,7 @@ import InputNode from './nodes/InputNode';
 import LlmNode from './nodes/LlmNode';
 import CodeNode from './nodes/CodeNode';
 import WebhookNode from './nodes/WebhookNode';
+import WebhookInputNode from './nodes/WebhookInputNode';
 import ModelConfigNode from './nodes/ModelConfigNode';
 
 const drawerWidth = 240;
@@ -63,6 +65,7 @@ const getNodeIcon = (nodeType) => {
         case 'llm': return <SmartToyIcon />;
         case 'code': return <CodeIcon />;
         case 'webhook_action': return <SendIcon />;
+        case 'webhook_trigger': return <WebhookIcon />;
         case 'model_config': return <SettingsIcon />;
         default: return <NotesIcon />;
     }
@@ -75,6 +78,7 @@ const nodeTypesList = [
     { type: 'llm', label: 'LLM Call' },
     { type: 'code', label: 'Code Execution' },
     { type: 'webhook_action', label: 'Webhook Action' },
+    { type: 'webhook_trigger', label: 'Webhook Trigger' },
     { type: 'model_config', label: 'Model Configuration' },
 ];
 
@@ -85,6 +89,7 @@ const nodeTypes = {
     llm: LlmNode,
     code: CodeNode,
     webhook_action: WebhookNode,
+    webhook_trigger: WebhookInputNode,
     model_config: ModelConfigNode,
 };
 
@@ -155,6 +160,12 @@ const defaultViewport = {
     x: 0,
     y: 0,
     zoom: 0.75, // Lower zoom value for a more zoomed out view
+};
+
+// Helper function to get the default label for a node type
+const getDefaultLabelForNodeType = (nodeType) => {
+    const nodeInfo = nodeTypesList.find(n => n.type === nodeType);
+    return nodeInfo ? nodeInfo.label : `${nodeType} Node`;
 };
 
 function WorkflowEditor() {
@@ -312,31 +323,74 @@ function WorkflowEditor() {
     }, []);
 
     const onDrop = useCallback(
-        (event) => {
+        async (event) => {
             event.preventDefault();
-            event.stopPropagation();
 
-            const type = event.dataTransfer.getData('application/reactflow');
-            if (typeof type === 'undefined' || !type) return;
+            const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect();
+            const nodeType = event.dataTransfer.getData('application/reactflow');
+
+            // Return early if no node type or reactFlowBounds doesn't exist
+            if (!nodeType || !reactFlowBounds) return;
 
             const position = screenToFlowPosition({
-                x: event.clientX - drawerWidth, // Adjust for drawer width
-                y: event.clientY - 64, // Adjust for AppBar height (approx)
+                x: event.clientX - reactFlowBounds.left,
+                y: event.clientY - reactFlowBounds.top,
             });
-
-            // Find label for the type
-            const nodeInfo = nodeTypesList.find(n => n.type === type);
-            const nodeLabel = nodeInfo ? nodeInfo.label : `${type} Node`;
 
             const newNode = {
                 id: getId(),
-                type,
+                type: nodeType,
                 position,
-                data: { label: nodeLabel }, // Initialize with label
+                data: { label: getDefaultLabelForNodeType(nodeType) },
             };
-            setNodes((nds) => nds.concat(newNode));
+
+            // If this is a webhook_trigger node, we need to register it to get a webhook ID
+            if (nodeType === 'webhook_trigger') {
+                if (!workflowId) {
+                    alert("Please save your workflow first before adding a webhook trigger node.");
+                    return;
+                }
+
+                try {
+                    // Add the node first so it appears immediately
+                    setNodes((nds) => nds.concat(newNode));
+
+                    // Then register the webhook
+                    const response = await axios.post('/api/webhooks/register', {
+                        workflow_id: workflowId,
+                        node_id: newNode.id
+                    });
+
+                    const webhook_id = response.data.webhook_id;
+
+                    // Update the node with the webhook ID
+                    setNodes((nds) => {
+                        return nds.map((node) => {
+                            if (node.id === newNode.id) {
+                                return {
+                                    ...node,
+                                    data: {
+                                        ...node.data,
+                                        webhook_id: webhook_id
+                                    }
+                                };
+                            }
+                            return node;
+                        });
+                    });
+
+                    console.log(`Registered webhook ID ${webhook_id} for node ${newNode.id}`);
+                } catch (error) {
+                    console.error('Error registering webhook:', error);
+                    // Remove the node if registration failed
+                    setNodes((nds) => nds.filter(node => node.id !== newNode.id));
+                    alert("Failed to register webhook. Please try again.");
+                }
+            } else {
+                setNodes((nds) => nds.concat(newNode));
+            }
         },
-        [screenToFlowPosition, setNodes]
+        [screenToFlowPosition, workflowId, setNodes]
     );
 
     // --- Node Type Drag Start ---
@@ -455,6 +509,47 @@ function WorkflowEditor() {
                 setWorkflowName(workflow.name || 'Imported Workflow');
                 setWorkflowId(workflowIdToLoad);
                 console.log("Workflow loaded successfully");
+
+                // Register webhooks for any webhook_trigger nodes without webhook_id
+                const webhookTriggerNodes = loadedNodes.filter(node =>
+                    node.type === 'webhook_trigger' && !node.data?.webhook_id
+                );
+
+                if (webhookTriggerNodes.length > 0) {
+                    console.log(`Registering webhooks for ${webhookTriggerNodes.length} webhook trigger nodes`);
+
+                    // Register webhooks for each node that needs one
+                    for (const node of webhookTriggerNodes) {
+                        try {
+                            const response = await axios.post('/api/webhooks/register', {
+                                workflow_id: workflowIdToLoad,
+                                node_id: node.id
+                            });
+
+                            const webhook_id = response.data.webhook_id;
+
+                            // Update the node with the webhook ID
+                            setNodes(nds => {
+                                return nds.map(n => {
+                                    if (n.id === node.id) {
+                                        return {
+                                            ...n,
+                                            data: {
+                                                ...n.data,
+                                                webhook_id: webhook_id
+                                            }
+                                        };
+                                    }
+                                    return n;
+                                });
+                            });
+
+                            console.log(`Registered webhook ID ${webhook_id} for node ${node.id}`);
+                        } catch (error) {
+                            console.error(`Error registering webhook for node ${node.id}:`, error);
+                        }
+                    }
+                }
             } else {
                 console.error("No workflow data returned");
             }
@@ -675,6 +770,55 @@ function WorkflowEditor() {
             });
         }
     }, [edges, onEdgesChange, setNodes]);
+
+    // Add this effect to poll for webhook updates
+    useEffect(() => {
+        // Only poll if there are webhook_trigger nodes in the workflow
+        const webhookNodes = nodes.filter(node => node.type === 'webhook_trigger' && node.data?.webhook_id);
+
+        if (webhookNodes.length === 0 || !workflowId) return;
+
+        // Poll every 5 seconds
+        const intervalId = setInterval(async () => {
+            try {
+                // Fetch the current workflow to get latest node data
+                const response = await axios.get(`/api/workflows/${workflowId}`);
+                const updatedWorkflow = response.data;
+
+                if (!updatedWorkflow || !updatedWorkflow.nodes) return;
+
+                // Check each webhook node for updates
+                let hasUpdates = false;
+                const updatedNodes = nodes.map(node => {
+                    if (node.type === 'webhook_trigger' && node.data?.webhook_id) {
+                        // Find the matching node in the updated workflow
+                        const updatedNode = updatedWorkflow.nodes.find(n => n.id === node.id);
+                        if (updatedNode && updatedNode.data?.last_payload &&
+                            JSON.stringify(updatedNode.data.last_payload) !== JSON.stringify(node.data.last_payload)) {
+                            // We have an update
+                            hasUpdates = true;
+                            return {
+                                ...node,
+                                data: {
+                                    ...node.data,
+                                    last_payload: updatedNode.data.last_payload
+                                }
+                            };
+                        }
+                    }
+                    return node;
+                });
+
+                if (hasUpdates) {
+                    setNodes(updatedNodes);
+                }
+            } catch (error) {
+                console.error('Error polling webhook updates:', error);
+            }
+        }, 5000);
+
+        return () => clearInterval(intervalId);
+    }, [nodes, workflowId]);
 
     return (
         <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>

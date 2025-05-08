@@ -27,12 +27,12 @@ export default defineConfig({
         },
       },
       // Add proxy for /webhooks if needed by frontend directly (SSE uses /api path now)
-      // '/webhooks': {
-      //   target: 'http://backend:8000',
-      //   changeOrigin: true,
-      //   secure: false,
-      //   rewrite: (path) => path.replace(/^\/webhooks/, '/webhooks') 
-      // }
+      '/webhooks': {
+        target: 'http://backend:8000',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/webhooks/, '/webhooks') 
+      }
     }
   }
 }) 

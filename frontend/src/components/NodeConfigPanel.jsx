@@ -536,6 +536,172 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                         />
                     </>
                 );
+            case 'webhook_trigger':
+                const webhookId = formData.webhook_id || 'Generating...';
+                const hasWebhookData = !!formData.last_payload;
+                return (
+                    <>
+                        <Box sx={{ mb: 3, p: 2, backgroundColor: '#f5f5f5', borderRadius: 1 }}>
+                            <Typography variant="subtitle2" gutterBottom>
+                                Webhook URL {formData.webhook_id &&
+                                    <span style={{
+                                        backgroundColor: '#4caf50',
+                                        color: 'white',
+                                        padding: '2px 8px',
+                                        borderRadius: '10px',
+                                        fontSize: '0.75rem',
+                                        marginLeft: '8px'
+                                    }}>
+                                        Ready
+                                    </span>
+                                }
+                            </Typography>
+                            <Typography
+                                sx={{
+                                    p: 1,
+                                    backgroundColor: 'background.paper',
+                                    borderRadius: 1,
+                                    fontFamily: 'monospace',
+                                    wordBreak: 'break-all',
+                                    border: formData.webhook_id ? '1px solid #e0e0e0' : '1px dashed #f44336'
+                                }}
+                            >
+                                {formData.webhook_id ?
+                                    `${window.location.origin}/webhooks/${webhookId}` :
+                                    'Save your workflow first to generate a webhook URL'
+                                }
+                            </Typography>
+                            {formData.webhook_id && (
+                                <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                                    <Button
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => navigator.clipboard.writeText(`${window.location.origin}/webhooks/${webhookId}`)}
+                                    >
+                                        Copy URL
+                                    </Button>
+                                    <Button
+                                        size="small"
+                                        variant="outlined"
+                                        color="info"
+                                        onClick={() => window.open(`${window.location.origin}/webhooks/${webhookId}`, '_blank')}
+                                    >
+                                        Open in New Tab
+                                    </Button>
+                                </Box>
+                            )}
+                        </Box>
+
+                        <Box sx={{ mb: 3 }}>
+                            <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
+                                Last Received Payload
+                                {hasWebhookData ?
+                                    <span style={{
+                                        backgroundColor: '#4caf50',
+                                        color: 'white',
+                                        padding: '2px 8px',
+                                        borderRadius: '10px',
+                                        fontSize: '0.75rem',
+                                        marginLeft: '8px'
+                                    }}>
+                                        Data Received
+                                    </span> :
+                                    <span style={{
+                                        backgroundColor: '#9e9e9e',
+                                        color: 'white',
+                                        padding: '2px 8px',
+                                        borderRadius: '10px',
+                                        fontSize: '0.75rem',
+                                        marginLeft: '8px'
+                                    }}>
+                                        Waiting
+                                    </span>
+                                }
+                            </Typography>
+                            <Box
+                                sx={{
+                                    p: 2,
+                                    backgroundColor: '#f5f5f5',
+                                    borderRadius: 1,
+                                    mb: 2,
+                                    maxHeight: '300px',
+                                    overflow: 'auto',
+                                    border: hasWebhookData ? '1px solid #e0e0e0' : '1px dashed #9e9e9e'
+                                }}
+                            >
+                                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                                    {formData.last_payload ?
+                                        JSON.stringify(formData.last_payload, null, 2) :
+                                        'No data received yet. Send a webhook to this URL to see the payload.'}
+                                </pre>
+                            </Box>
+
+                            <Button
+                                variant="contained"
+                                color="primary"
+                                size="small"
+                                onClick={() => {
+                                    if (formData.webhook_id) {
+                                        const testPayload = {
+                                            message: "This is a test payload",
+                                            timestamp: new Date().toISOString(),
+                                            test: true,
+                                            sample_data: {
+                                                string_value: "example text",
+                                                number_value: 42,
+                                                boolean_value: true,
+                                                array_value: [1, 2, 3],
+                                                nested_object: {
+                                                    key: "value"
+                                                }
+                                            }
+                                        };
+
+                                        axios.post(`/webhooks/${formData.webhook_id}`, testPayload)
+                                            .then(response => {
+                                                console.log("Test webhook sent:", response.data);
+                                                // The server will push this to the node via SSE
+                                            })
+                                            .catch(error => {
+                                                console.error("Error sending test webhook:", error);
+                                            });
+                                    }
+                                }}
+                                disabled={!formData.webhook_id}
+                                sx={{ mr: 1 }}
+                            >
+                                Send Test Webhook
+                            </Button>
+
+                            {hasWebhookData && (
+                                <Button
+                                    variant="outlined"
+                                    color="warning"
+                                    size="small"
+                                    onClick={() => {
+                                        if (window.confirm("Clear the current webhook data?")) {
+                                            onUpdate(node.id, { last_payload: null });
+                                        }
+                                    }}
+                                >
+                                    Clear Data
+                                </Button>
+                            )}
+                        </Box>
+
+                        <Typography variant="subtitle2" gutterBottom>
+                            How to Use Webhook Data
+                        </Typography>
+                        <Box sx={{ p: 2, backgroundColor: '#e3f2fd', borderRadius: 1, fontSize: '0.875rem' }}>
+                            <p style={{ margin: '0 0 8px 0' }}>After receiving data, you can reference it in subsequent nodes:</p>
+                            <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                                <li>The entire payload is passed to the next node</li>
+                                <li>Access specific fields using dot notation in code nodes</li>
+                                <li>Example: <code>input_data.sample_data.number_value</code></li>
+                            </ul>
+                        </Box>
+                    </>
+                );
             case 'input':
             case 'default':
                 return (

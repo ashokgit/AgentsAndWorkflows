@@ -24,5 +24,5 @@ COPY . .
 EXPOSE 8000
 
 # Define the command to run the application
-# Use Gunicorn for production potentially, but uvicorn is fine for this example
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Update to use the new modular structure entry point
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

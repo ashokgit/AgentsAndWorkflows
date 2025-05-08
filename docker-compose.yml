@@ -10,6 +10,7 @@ services:
     # Maps ./backend on host to /app in container
     volumes:
       - ./backend:/app
+      - workflow-data:/app/data # Add this volume for persistent data storage
     # Optional: Add environment variables if needed
     # environment:
     #   - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
@@ -41,5 +42,6 @@ networks:
   workflow-net:
     driver: bridge
 
-# Optional: Define volumes for persistent data (e.g., database)
-# volumes: #   postgres_data: 
+# Define volumes for persistent data
+volumes:
+  workflow-data: # Named volume for workflow and webhook data
