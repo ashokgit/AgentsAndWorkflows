@@ -151,6 +151,8 @@ function WorkflowEditor() {
     // --- Node Double-Click Handler for Opening Config ---
     const onNodeDoubleClick = useCallback((event, node) => {
         console.log("Node double-clicked:", node);
+        // Make sure the node is also selected
+        setSelectedNode(node);
         // Open config panel on double-click
         setConfigNode(node);
     }, []);
@@ -160,6 +162,20 @@ function WorkflowEditor() {
         setSelectedNode(null);
         // Don't close config modal when clicking on pane
     }, []);
+
+    // Close modal with escape key
+    useEffect(() => {
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape' && configNode) {
+                setConfigNode(null);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [configNode]);
 
     // --- Drag and Drop for Adding Nodes ---
     const onDragOver = useCallback((event) => {
@@ -417,10 +433,10 @@ function WorkflowEditor() {
 
     // Close config panel if the selected node is deleted
     useEffect(() => {
-        if (selectedNode && !nodes.find(n => n.id === selectedNode.id)) {
-            setSelectedNode(null);
+        if (configNode && !nodes.find(n => n.id === configNode.id)) {
+            setConfigNode(null);
         }
-    }, [nodes, selectedNode]);
+    }, [nodes, configNode]);
 
     // *** NEW: Update nodes data when execution status changes ***
     useEffect(() => {
@@ -597,12 +613,12 @@ function WorkflowEditor() {
             </Box>
 
             {/* Node Config Modal - replacing the side panel */}
-            {selectedNode && (
+            {configNode && (
                 <NodeConfigPanel
-                    node={selectedNode}
+                    node={configNode}
                     onUpdate={updateNodeData}
-                    onClose={() => setSelectedNode(null)}
-                    open={Boolean(selectedNode)}
+                    onClose={() => setConfigNode(null)}
+                    open={Boolean(configNode)}
                 />
             )}
         </Box>
