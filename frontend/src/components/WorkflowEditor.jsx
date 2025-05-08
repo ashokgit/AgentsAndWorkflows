@@ -50,6 +50,14 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import AccountTreeIcon from '@mui/icons-material/AccountTree'; // Icon for App Title
 import SettingsIcon from '@mui/icons-material/Settings';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import ApiIcon from '@mui/icons-material/Api'; // API Consumer Icon
+import FitScreenIcon from '@mui/icons-material/FitScreen'; // Fit View Icon
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import InputOutlinedIcon from '@mui/icons-material/InputOutlined'; // For Inputs & Triggers
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'; // For Configuration
+import LoopOutlinedIcon from '@mui/icons-material/LoopOutlined'; // For Processing
+import PublishOutlinedIcon from '@mui/icons-material/PublishOutlined'; // For External Actions
 
 // Custom Node Components
 import DefaultNode from './nodes/DefaultNode';
@@ -59,6 +67,7 @@ import CodeNode from './nodes/CodeNode';
 import WebhookNode from './nodes/WebhookNode';
 import WebhookInputNode from './nodes/WebhookInputNode';
 import ModelConfigNode from './nodes/ModelConfigNode';
+import ApiConsumerNode from './nodes/ApiConsumerNode';
 
 const drawerWidth = 240;
 const logPanelHeight = 200;
@@ -73,20 +82,41 @@ const getNodeIcon = (nodeType) => {
         case 'webhook_action': return <SendIcon />;
         case 'webhook_trigger': return <WebhookIcon />;
         case 'model_config': return <SettingsIcon />;
+        case 'api_consumer': return <ApiIcon />;
         default: return <NotesIcon />;
     }
 };
 
 // Available node types for the palette
 const nodeTypesList = [
-    { type: 'trigger', label: 'Input / Trigger' },
-    { type: 'defaultnode', label: 'Default / Log' },
-    { type: 'llm', label: 'LLM Call' },
-    { type: 'code', label: 'Code Execution' },
-    { type: 'webhook_action', label: 'Webhook Action' },
-    { type: 'webhook_trigger', label: 'Webhook Trigger' },
-    { type: 'model_config', label: 'Model Configuration' },
+    // Input/Triggers group
+    { type: 'trigger', label: 'Input / Trigger', category: 'Inputs & Triggers' },
+    { type: 'webhook_trigger', label: 'Webhook Trigger', category: 'Inputs & Triggers' },
+
+    // Processing group
+    { type: 'llm', label: 'LLM Call', category: 'Processing' },
+    { type: 'code', label: 'Code Execution', category: 'Processing' },
+    { type: 'defaultnode', label: 'Default / Log', category: 'Processing' },
+
+    // External Actions group
+    { type: 'webhook_action', label: 'Webhook Action', category: 'External Actions' },
+    { type: 'api_consumer', label: 'API Consumer', category: 'External Actions' },
+
+    // Configuration group
+    { type: 'model_config', label: 'Model Configuration', category: 'Configuration' },
 ];
+
+// Group nodes by category
+const getNodesByCategory = () => {
+    const categories = {};
+    nodeTypesList.forEach(node => {
+        if (!categories[node.category]) {
+            categories[node.category] = [];
+        }
+        categories[node.category].push(node);
+    });
+    return categories;
+};
 
 // Mapping for React Flow with enhanced props
 const getNodeTypes = (updateNodeData) => ({
@@ -97,6 +127,7 @@ const getNodeTypes = (updateNodeData) => ({
     webhook_action: (props) => <WebhookNode {...props} />,
     webhook_trigger: (props) => <WebhookInputNode {...props} updateNodeData={updateNodeData} />,
     model_config: (props) => <ModelConfigNode {...props} />,
+    api_consumer: (props) => <ApiConsumerNode {...props} />,
 });
 
 // Change the id_counter to ensure it's not reset when the component re-renders
@@ -194,7 +225,7 @@ const defaultEdgeOptions = {
 const defaultViewport = {
     x: 0,
     y: 0,
-    zoom: 0.75, // Lower zoom value for a more zoomed out view
+    zoom: 0.65, // Lower zoom value for a more zoomed out view
 };
 
 // Helper function to get the default label for a node type
@@ -203,9 +234,26 @@ const getDefaultLabelForNodeType = (nodeType) => {
     return nodeInfo ? nodeInfo.label : `${nodeType} Node`;
 };
 
+// Helper function to get category icon
+const getCategoryIcon = (category) => {
+    switch (category) {
+        case 'Inputs & Triggers':
+            return <InputOutlinedIcon fontSize="small" sx={{ color: '#4dabf5' }} />;
+        case 'Processing':
+            return <LoopOutlinedIcon fontSize="small" sx={{ color: '#66bb6a' }} />;
+        case 'External Actions':
+            return <PublishOutlinedIcon fontSize="small" sx={{ color: '#f57c00' }} />;
+        case 'Configuration':
+            return <SettingsOutlinedIcon fontSize="small" sx={{ color: '#ba68c8' }} />;
+        default:
+            return null;
+    }
+};
+
 function WorkflowEditor() {
     const reactFlowWrapper = useRef(null); // Ref for drag and drop bounds
-    const { screenToFlowPosition, project } = useReactFlow(); // project needed for viewport
+    const reactFlowInstance = useReactFlow(); // Get full reactFlow instance
+    const { screenToFlowPosition, project } = reactFlowInstance; // project needed for viewport
     const [nodes, setNodes, onNodesChange] = useNodesState([]); // Start empty
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     const [workflowName, setWorkflowName] = useState('My Workflow');
@@ -218,6 +266,20 @@ function WorkflowEditor() {
     const [loadWorkflowIdInput, setLoadWorkflowIdInput] = useState(''); // State for load input
     const [availableWorkflows, setAvailableWorkflows] = useState([]); // State for available workflows
     const [selectedWorkflowId, setSelectedWorkflowId] = useState(''); // State for selected workflow from dropdown
+    const [expandedCategories, setExpandedCategories] = useState({
+        'Inputs & Triggers': true,
+        'Processing': true,
+        'External Actions': true,
+        'Configuration': true
+    });
+
+    // Toggle category expansion
+    const toggleCategory = (category) => {
+        setExpandedCategories(prev => ({
+            ...prev,
+            [category]: !prev[category]
+        }));
+    };
 
     // Function to validate the workflow nodes
     const validateWorkflow = useCallback(() => {
@@ -656,6 +718,11 @@ function WorkflowEditor() {
                 setWorkflowName(workflow.name || 'Imported Workflow');
                 setWorkflowId(workflowIdToLoad);
                 console.log("Workflow loaded successfully");
+
+                // After nodes and edges are set, explicitly call fitView to ensure all nodes are visible
+                setTimeout(() => {
+                    reactFlowInstance.fitView({ padding: 0.4, maxZoom: 0.8 });
+                }, 50);
 
                 // Check for webhook trigger nodes that need registering
                 const webhookTriggerNodes = loadedNodes.filter(node =>
@@ -1172,24 +1239,83 @@ function WorkflowEditor() {
             >
                 <Toolbar /> { /* Spacer to push content below AppBar */}
                 <Box sx={{ overflow: 'auto', padding: '8px' }}>
-                    <Typography variant="h6" sx={{ padding: '8px 16px' }}>Nodes</Typography>
-                    <Divider />
-                    <List>
-                        {nodeTypesList.map((nodeInfo) => (
-                            <ListItem key={nodeInfo.type} disablePadding>
-                                <ListItemButton
-                                    onDragStart={(event) => onDragStart(event, nodeInfo.type)}
-                                    draggable
-                                    sx={{ border: '1px dashed #ccc', marginBottom: '8px', borderRadius: '4px' }}
-                                >
-                                    <ListItemIcon sx={{ minWidth: '40px' }}>
-                                        {getNodeIcon(nodeInfo.type)}
-                                    </ListItemIcon>
-                                    <ListItemText primary={nodeInfo.label} />
-                                </ListItemButton>
-                            </ListItem>
-                        ))}
-                    </List>
+                    <Typography variant="h6" sx={{ padding: '8px 16px', mb: 1 }}>Nodes</Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    {Object.entries(getNodesByCategory()).map(([category, nodes]) => (
+                        <Box
+                            key={category}
+                            sx={{
+                                mb: 2,
+                                backgroundColor: 'rgba(0,0,0,0.02)',
+                                borderRadius: '8px',
+                                overflow: 'hidden'
+                            }}
+                        >
+                            <Box
+                                onClick={() => toggleCategory(category)}
+                                sx={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    cursor: 'pointer',
+                                    padding: '4px 8px',
+                                    backgroundColor: 'rgba(0,0,0,0.03)',
+                                    '&:hover': {
+                                        backgroundColor: 'rgba(0,0,0,0.05)',
+                                    }
+                                }}
+                            >
+                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                    <Box sx={{ mr: 1 }}>{getCategoryIcon(category)}</Box>
+                                    <Typography
+                                        variant="subtitle2"
+                                        sx={{
+                                            padding: '6px 8px',
+                                            color: 'text.secondary',
+                                            fontWeight: 'bold',
+                                            fontSize: '0.75rem',
+                                            textTransform: 'uppercase',
+                                            letterSpacing: '0.08em',
+                                        }}
+                                    >
+                                        {category}
+                                    </Typography>
+                                </Box>
+                                {expandedCategories[category] ?
+                                    <ExpandLessIcon fontSize="small" color="action" /> :
+                                    <ExpandMoreIcon fontSize="small" color="action" />
+                                }
+                            </Box>
+                            {expandedCategories[category] && (
+                                <List dense sx={{ pt: 1, pb: 1 }}>
+                                    {nodes.map((nodeInfo) => (
+                                        <ListItem key={nodeInfo.type} disablePadding>
+                                            <ListItemButton
+                                                onDragStart={(event) => onDragStart(event, nodeInfo.type)}
+                                                draggable
+                                                sx={{
+                                                    border: '1px dashed #ccc',
+                                                    marginBottom: '6px',
+                                                    marginLeft: '8px',
+                                                    marginRight: '8px',
+                                                    borderRadius: '4px',
+                                                    '&:hover': {
+                                                        backgroundColor: 'rgba(66, 133, 244, 0.04)',
+                                                        borderColor: '#b3d1ff'
+                                                    }
+                                                }}
+                                            >
+                                                <ListItemIcon sx={{ minWidth: '40px' }}>
+                                                    {getNodeIcon(nodeInfo.type)}
+                                                </ListItemIcon>
+                                                <ListItemText primary={nodeInfo.label} />
+                                            </ListItemButton>
+                                        </ListItem>
+                                    ))}
+                                </List>
+                            )}
+                        </Box>
+                    ))}
                 </Box>
             </Drawer>
 
@@ -1295,6 +1421,15 @@ function WorkflowEditor() {
                             title="Force refresh of webhook data from external calls"
                         >
                             Refresh Webhooks
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            startIcon={<FitScreenIcon />}
+                            onClick={() => reactFlowInstance.fitView({ padding: 0.4, maxZoom: 0.8 })}
+                            sx={{ ml: 2 }}
+                            title="Fit view to show all nodes"
+                        >
+                            Fit View
                         </Button>
                         <Button
                             variant="outlined"
