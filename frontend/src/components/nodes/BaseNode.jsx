@@ -5,6 +5,8 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { motion } from 'framer-motion';
+import ErrorIcon from '@mui/icons-material/Error';
+import Tooltip from '@mui/material/Tooltip';
 
 // Basic styles for Handles
 const handleStyle = (theme, position) => ({
@@ -56,7 +58,7 @@ const nodeVariants = {
 // BaseNode component
 const BaseNode = ({ data, selected, children }) => {
     const theme = useTheme();
-    const { label, status } = data || { label: 'Node' };
+    const { label, status, validationError } = data || { label: 'Node' };
     const currentStatus = status || 'idle';
 
     // Determine animation variant based on status
@@ -93,9 +95,10 @@ const BaseNode = ({ data, selected, children }) => {
                 sx={{
                     padding: '10px 15px',
                     borderRadius: '8px',
-                    border: `1px solid ${selected ? theme.palette.primary.main : theme.palette.divider}`,
+                    border: `1px solid ${selected ? theme.palette.primary.main : validationError ? theme.palette.error.main : theme.palette.divider}`,
                     background: theme.palette.background.paper,
-                    backgroundColor: status === 'Failed' ? theme.palette.error.lighter : theme.palette.background.paper,
+                    backgroundColor: status === 'Failed' ? theme.palette.error.lighter :
+                        validationError ? 'rgba(211,47,47,0.05)' : theme.palette.background.paper,
                     minWidth: '180px',
                     maxWidth: '250px',
                     display: 'flex',
@@ -140,6 +143,17 @@ const BaseNode = ({ data, selected, children }) => {
                     >
                         {label || 'Node'}
                     </Typography>
+
+                    {/* Validation Error Indicator */}
+                    {validationError && (
+                        <Tooltip title={validationError} arrow placement="top">
+                            <ErrorIcon
+                                color="error"
+                                fontSize="small"
+                                sx={{ flexShrink: 0 }}
+                            />
+                        </Tooltip>
+                    )}
                 </Box>
 
                 {/* Output Handle (Right) */}

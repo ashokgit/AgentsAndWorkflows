@@ -9,6 +9,7 @@ import ReactFlow, {
     useReactFlow,
     ReactFlowProvider,
     MarkerType, // Import MarkerType for edge arrows
+    getBezierPath, // Import for custom edge
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import axios from 'axios'; // For API calls
@@ -41,6 +42,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SaveIcon from '@mui/icons-material/Save';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import AccountTreeIcon from '@mui/icons-material/AccountTree'; // Icon for App Title
+import SettingsIcon from '@mui/icons-material/Settings';
 
 // Custom Node Components
 import DefaultNode from './nodes/DefaultNode';
@@ -48,6 +50,7 @@ import InputNode from './nodes/InputNode';
 import LlmNode from './nodes/LlmNode';
 import CodeNode from './nodes/CodeNode';
 import WebhookNode from './nodes/WebhookNode';
+import ModelConfigNode from './nodes/ModelConfigNode';
 
 const drawerWidth = 240;
 const logPanelHeight = 200;
@@ -60,6 +63,7 @@ const getNodeIcon = (nodeType) => {
         case 'llm': return <SmartToyIcon />;
         case 'code': return <CodeIcon />;
         case 'webhook_action': return <SendIcon />;
+        case 'model_config': return <SettingsIcon />;
         default: return <NotesIcon />;
     }
 };
@@ -71,6 +75,7 @@ const nodeTypesList = [
     { type: 'llm', label: 'LLM Call' },
     { type: 'code', label: 'Code Execution' },
     { type: 'webhook_action', label: 'Webhook Action' },
+    { type: 'model_config', label: 'Model Configuration' },
 ];
 
 // Mapping for React Flow
@@ -80,10 +85,54 @@ const nodeTypes = {
     llm: LlmNode,
     code: CodeNode,
     webhook_action: WebhookNode,
+    model_config: ModelConfigNode,
 };
 
 let id_counter = 0; // Use a different name to avoid potential conflicts
 const getId = () => `dndnode_${id_counter++}`;
+
+// Custom edge component for model configuration connections
+const ModelConfigEdge = ({ id, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style = {} }) => {
+    const [edgePath] = getBezierPath({
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition,
+    });
+
+    return (
+        <>
+            <path
+                id={id}
+                style={{
+                    ...style,
+                    stroke: '#3f83f8',
+                    strokeWidth: 2,
+                    strokeDasharray: '5,5',
+                }}
+                className="react-flow__edge-path"
+                d={edgePath}
+            />
+            <text>
+                <textPath
+                    href={`#${id}`}
+                    style={{ fontSize: '10px', fill: '#3f83f8' }}
+                    startOffset="50%"
+                    textAnchor="middle"
+                >
+                    uses config
+                </textPath>
+            </text>
+        </>
+    );
+};
+
+// Add the edge type to React Flow
+const edgeTypes = {
+    modelConfig: ModelConfigEdge,
+};
 
 // Default edge options
 const defaultEdgeOptions = {
@@ -122,6 +171,51 @@ function WorkflowEditor() {
     const eventSourceRef = useRef(null); // Ref to store the EventSource instance
     const [loadWorkflowIdInput, setLoadWorkflowIdInput] = useState(''); // State for load input
 
+    // Function to validate the workflow nodes
+    const validateWorkflow = useCallback(() => {
+        // Create a map of validation errors by node ID
+        const validationErrors = {};
+
+        // Check LLM nodes for model configuration
+        const modelConfigNodes = nodes.filter(n => n.type === 'model_config');
+
+        nodes.forEach(node => {
+            if (node.type === 'llm') {
+                const hasOwnModel = node.data?.model;
+                const hasModelConfigRef = node.data?.model_config_id && modelConfigNodes.some(n => n.id === node.data.model_config_id);
+
+                if (!hasOwnModel && !hasModelConfigRef) {
+                    validationErrors[node.id] = "LLM node needs a model configuration";
+                }
+            }
+        });
+
+        return validationErrors;
+    }, [nodes]);
+
+    // Effect to update node validation when nodes change
+    useEffect(() => {
+        const errors = validateWorkflow();
+
+        // Update nodes with validation errors
+        setNodes((nds) =>
+            nds.map((node) => {
+                const error = errors[node.id];
+                // Avoid unnecessary updates if validation hasn't changed
+                if (node.data?.validationError === error) {
+                    return node;
+                }
+                return {
+                    ...node,
+                    data: {
+                        ...node.data,
+                        validationError: error, // Add/update validation error in node data
+                    },
+                };
+            })
+        );
+    }, [nodes, validateWorkflow, setNodes]);
+
     // Update node data callback for the config panel
     const updateNodeData = useCallback((nodeId, newData) => {
         setNodes((nds) =>
@@ -137,8 +231,41 @@ function WorkflowEditor() {
     }, [setNodes]);
 
     const onConnect = useCallback(
-        (params) => setEdges((eds) => addEdge(params, eds)), // defaultEdgeOptions applied globally
-        [setEdges],
+        (params) => {
+            // Get the source and target nodes
+            const sourceNode = nodes.find(node => node.id === params.source);
+            const targetNode = nodes.find(node => node.id === params.target);
+
+            // Check if this is a connection between a model_config and an LLM node
+            if (sourceNode && targetNode) {
+                if (sourceNode.type === 'model_config' && targetNode.type === 'llm') {
+                    // Update the LLM node to use this model configuration
+                    updateNodeData(targetNode.id, { model_config_id: sourceNode.id });
+
+                    // Create a custom edge with different styling
+                    return setEdges((eds) => addEdge({
+                        ...params,
+                        type: 'modelConfig', // Custom edge type
+                        animated: true,
+                    }, eds));
+                }
+                else if (sourceNode.type === 'llm' && targetNode.type === 'model_config') {
+                    // Update the LLM node to use this model configuration
+                    updateNodeData(sourceNode.id, { model_config_id: targetNode.id });
+
+                    // Create a custom edge with different styling
+                    return setEdges((eds) => addEdge({
+                        ...params,
+                        type: 'modelConfig', // Custom edge type
+                        animated: true,
+                    }, eds));
+                }
+            }
+
+            // Default edge creation for other connections
+            return setEdges((eds) => addEdge(params, eds));
+        },
+        [setEdges, nodes, updateNodeData]
     );
 
     // --- Node Selection Handler ---
@@ -246,8 +373,6 @@ function WorkflowEditor() {
     };
 
     // --- API Interaction --- 
-    const baseUrl = window.location.origin;
-
     const handleSaveWorkflow = async () => {
         const currentWorkflowId = workflowId || `wf_${Date.now()}`;
         if (!workflowId) {
@@ -275,8 +400,8 @@ function WorkflowEditor() {
 
         try {
             console.log("Saving workflow:", workflowData);
-            // Use explicitly constructed URL
-            const response = await axios.post(`${baseUrl}/api/workflows`, workflowData);
+            // Use relative URL for consistency with Vite proxy
+            const response = await axios.post('/api/workflows', workflowData);
             alert(`Workflow saved successfully! ID: ${response.data.workflow_id}`);
             setWorkflowId(response.data.workflow_id); // Ensure ID is set after save
         } catch (error) {
@@ -286,51 +411,70 @@ function WorkflowEditor() {
     };
 
     const handleLoadWorkflow = async () => {
-        const idToLoad = loadWorkflowIdInput.trim();
-        if (!idToLoad) {
-            alert("Please enter a Workflow ID to load.");
-            return;
-        }
         try {
-            console.log(`Loading workflow: ${idToLoad}`);
-            // Use explicitly constructed URL
-            const response = await axios.get(`${baseUrl}/api/workflows/${idToLoad}`);
-            const wf = response.data;
-            console.log("Loaded workflow data:", wf);
+            const workflowIdToLoad = loadWorkflowIdInput || workflowId;
+            if (!workflowIdToLoad) {
+                console.error("No workflow ID to load");
+                return;
+            }
 
-            // Map nodes and edges back to React Flow format if needed
-            // Assuming backend format matches closely for now
-            const flowNodes = wf.nodes.map(n => ({
-                id: n.id,
-                type: n.type,
-                position: n.position,
-                data: n.data || { label: n.type }, // Ensure data is present
-            }));
-            const flowEdges = wf.edges.map(e => ({
-                id: e.id,
-                source: e.source,
-                target: e.target,
-                sourceHandle: e.sourceHandle,
-                targetHandle: e.targetHandle
-            }));
+            const response = await axios.get(`/api/workflows/${workflowIdToLoad}`);
+            if (response.data) {
+                const workflow = response.data;
 
-            setNodes(flowNodes);
-            setEdges(flowEdges);
-            setWorkflowName(wf.name || 'Loaded Workflow');
-            setWorkflowId(wf.id);
-            setRunLogs([]); // Clear logs when loading new workflow
-            setSelectedNode(null); // Close config panel
-            setNodeExecutionStatus({}); // Clear statuses
-            alert('Workflow loaded!');
+                // Extract nodes and edges
+                const loadedNodes = workflow.nodes || [];
+                let loadedEdges = workflow.edges || [];
+
+                // Reset node execution status
+                setNodeExecutionStatus({});
+
+                // Map model configuration to LLM connections with custom edge styling
+                loadedEdges = loadedEdges.map(edge => {
+                    // Find source and target nodes to check their types
+                    const sourceNode = loadedNodes.find(node => node.id === edge.source);
+                    const targetNode = loadedNodes.find(node => node.id === edge.target);
+
+                    if (sourceNode && targetNode) {
+                        // If this is a connection between model_config and llm, use custom edge type
+                        if ((sourceNode.type === 'model_config' && targetNode.type === 'llm') ||
+                            (sourceNode.type === 'llm' && targetNode.type === 'model_config')) {
+                            return {
+                                ...edge,
+                                type: 'modelConfig',
+                                animated: true
+                            };
+                        }
+                    }
+
+                    return edge;
+                });
+
+                setNodes(loadedNodes);
+                setEdges(loadedEdges);
+                setWorkflowName(workflow.name || 'Imported Workflow');
+                setWorkflowId(workflowIdToLoad);
+                console.log("Workflow loaded successfully");
+            } else {
+                console.error("No workflow data returned");
+            }
         } catch (error) {
             console.error("Error loading workflow:", error);
-            alert(`Error loading workflow: ${error.response?.data?.detail || error.message}`);
         }
     };
 
     const handleRunWorkflow = async () => {
         if (!workflowId) {
             alert("Please save or load a workflow before running.");
+            return;
+        }
+
+        // Check for validation errors
+        const errors = validateWorkflow();
+        const errorCount = Object.keys(errors).length;
+
+        if (errorCount > 0) {
+            alert(`Cannot run workflow: ${errorCount} node${errorCount > 1 ? 's have' : ' has'} validation errors. Please fix them first.`);
             return;
         }
 
@@ -347,7 +491,7 @@ function WorkflowEditor() {
         setRunLogs([{ step: "Initiating Run...", status: "Pending", timestamp: Date.now() / 1000 }]);
 
         try {
-            const response = await axios.post(`${baseUrl}/api/workflows/${workflowId}/run`, {});
+            const response = await axios.post(`/api/workflows/${workflowId}/run`, {});
             const runId = response.data.run_id;
 
             if (!runId) throw new Error("Backend did not return a run_id.");
@@ -356,7 +500,7 @@ function WorkflowEditor() {
             // Clear initiating message before streaming starts
             setRunLogs([]);
 
-            const sseUrl = `${baseUrl}/api/workflows/${workflowId}/runs/${runId}/stream`;
+            const sseUrl = `/api/workflows/${workflowId}/runs/${runId}/stream`;
             const newEventSource = new EventSource(sseUrl);
             eventSourceRef.current = newEventSource;
 
@@ -458,8 +602,29 @@ function WorkflowEditor() {
         );
     }, [nodeExecutionStatus, setNodes]); // Rerun when status map changes
 
+    // Helper function to create edges between model config and LLM nodes
+    const createModelConfigEdge = useCallback((modelConfigId, llmNodeId) => {
+        // Check if edge already exists
+        const edgeExists = edges.some(edge =>
+            (edge.source === modelConfigId && edge.target === llmNodeId) ||
+            (edge.source === llmNodeId && edge.target === modelConfigId)
+        );
+
+        if (!edgeExists) {
+            const newEdge = {
+                id: `edge-${modelConfigId}-${llmNodeId}`,
+                source: modelConfigId,
+                target: llmNodeId,
+                type: 'modelConfig',
+                animated: true
+            };
+
+            setEdges(prevEdges => [...prevEdges, newEdge]);
+        }
+    }, [edges, setEdges]);
+
     return (
-        <Box sx={{ display: 'flex', height: '100vh' }}>
+        <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
             {/* Left Node Palette Drawer */}
             <Drawer
                 variant="permanent"
@@ -497,9 +662,11 @@ function WorkflowEditor() {
                 component="main"
                 sx={{
                     flexGrow: 1,
-                    height: '100vh',
+                    overflow: 'hidden',
                     display: 'flex',
                     flexDirection: 'column',
+                    height: '100%',
+                    bgcolor: 'background.default',
                 }}
             >
                 {/* Top AppBar */}
@@ -559,10 +726,8 @@ function WorkflowEditor() {
                     ref={reactFlowWrapper}
                     sx={{
                         flexGrow: 1,
-                        marginTop: '64px', // Height of AppBar
-                        height: `calc(100vh - 64px - ${logPanelHeight}px)`, // Full height minus AppBar and LogPanel
-                        width: '100%',
-                        overflow: 'hidden'
+                        minHeight: 0, // Key to allow parent container to limit the height
+                        position: 'relative'
                     }}
                 >
                     <ReactFlow
@@ -574,6 +739,7 @@ function WorkflowEditor() {
                         onDragOver={onDragOver}
                         onDrop={onDrop}
                         nodeTypes={nodeTypes}
+                        edgeTypes={edgeTypes}
                         defaultEdgeOptions={defaultEdgeOptions}
                         defaultViewport={defaultViewport}
                         fitView
@@ -612,15 +778,15 @@ function WorkflowEditor() {
                 </Paper>
             </Box>
 
-            {/* Node Config Modal - replacing the side panel */}
-            {configNode && (
-                <NodeConfigPanel
-                    node={configNode}
-                    onUpdate={updateNodeData}
-                    onClose={() => setConfigNode(null)}
-                    open={Boolean(configNode)}
-                />
-            )}
+            {/* Node Configuration Panel (Modal) */}
+            <NodeConfigPanel
+                node={configNode}
+                nodes={nodes}
+                onUpdate={updateNodeData}
+                onClose={() => setConfigNode(null)}
+                open={!!configNode}
+                onCreateEdge={createModelConfigEdge}
+            />
         </Box>
     );
 }
