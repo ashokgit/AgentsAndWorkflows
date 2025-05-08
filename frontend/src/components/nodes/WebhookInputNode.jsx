@@ -1,89 +1,162 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import BaseNode from './BaseNode';
 import WebhookIcon from '@mui/icons-material/Webhook';
-import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Tooltip from '@mui/material/Tooltip';
 import CircularProgress from '@mui/material/CircularProgress';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorIcon from '@mui/icons-material/Error';
+import PendingIcon from '@mui/icons-material/Pending';
 
 function WebhookInputNode(props) {
-    const [hasPayload, setHasPayload] = useState(!!props.data?.last_payload);
-    const [updateTime, setUpdateTime] = useState(Date.now());
-    const [animateUpdate, setAnimateUpdate] = useState(false);
-    const [lastPayloadJson, setLastPayloadJson] = useState('');
+    // Track if we've already seen the data
+    const [hasProcessedData, setHasProcessedData] = useState(false);
+    const [updateTime, setUpdateTime] = useState(
+        props.data?.last_payload ? Date.now() : null
+    );
+    const [showLoader, setShowLoader] = useState(false);
 
-    // Keep track of the current payload JSON for comparison
-    const currentPayloadJson = props.data?.last_payload ? JSON.stringify(props.data?.last_payload) : '';
+    // Ref to keep the latest payload JSON string for comparison
+    const lastPayloadJsonRef = useRef(
+        props.data?.last_payload ? JSON.stringify(props.data.last_payload) : ''
+    );
+
+    // Check if the webhook is properly configured and has data
+    const isConfigured = !!props.data?.webhook_id;
+    const hasPayload = !!props.data?.last_payload;
+
+    // Calculate node status based on current state
+    const calculateStatus = useCallback(() => {
+        if (!isConfigured) return 'error';
+        if (hasPayload) return 'success';
+        return 'idle';
+    }, [isConfigured, hasPayload]);
+
+    const [nodeStatus, setNodeStatus] = useState(() => calculateStatus());
 
     // Effect to detect changes in webhook data
     useEffect(() => {
-        const newHasPayload = !!props.data?.last_payload;
+        // Get current payload JSON string
+        const currentPayloadStr = props.data?.last_payload
+            ? JSON.stringify(props.data.last_payload)
+            : '';
 
-        // If we have a new payload when we didn't before, or payload changed
-        if (newHasPayload && (currentPayloadJson !== lastPayloadJson || !hasPayload)) {
+        // Data has changed
+        const dataChanged = currentPayloadStr !== lastPayloadJsonRef.current;
+
+        // If there's data and it has changed
+        if (hasPayload && dataChanged) {
             console.log("WebhookInputNode: New webhook data detected");
             setUpdateTime(Date.now());
-            setAnimateUpdate(true);
-            setLastPayloadJson(currentPayloadJson);
+            lastPayloadJsonRef.current = currentPayloadStr;
+            setShowLoader(true);
+            setNodeStatus('pending');
 
-            // Reset animation after 2 seconds
+            // Show loader briefly and then show success
             const timer = setTimeout(() => {
-                setAnimateUpdate(false);
-            }, 2000);
+                setShowLoader(false);
+                setNodeStatus('success');
+                setHasProcessedData(true);
+            }, 1500);
 
             return () => clearTimeout(timer);
         }
-
-        setHasPayload(newHasPayload);
-    }, [props.data?.last_payload, hasPayload, currentPayloadJson, lastPayloadJson]);
+        // Make sure we update status appropriately
+        else {
+            setNodeStatus(calculateStatus());
+            // If we have payload data but haven't processed it yet, mark as processed
+            if (hasPayload && !hasProcessedData) {
+                setHasProcessedData(true);
+                setUpdateTime(updateTime || Date.now());
+            }
+        }
+    }, [props.data?.last_payload, props.data?.webhook_id, isConfigured,
+        hasPayload, hasProcessedData, updateTime, calculateStatus]);
 
     // Format updateTime to show when data was last updated
-    const lastUpdateText = hasPayload
-        ? `Data received: ${new Date(updateTime).toLocaleTimeString()}`
-        : "Waiting for webhook data";
+    const lastUpdateText = !isConfigured
+        ? "Webhook not configured. Save your workflow."
+        : hasPayload
+            ? `Data received: ${updateTime ? new Date(updateTime).toLocaleTimeString() : 'Unknown time'}`
+            : "Waiting for webhook data";
+
+    // Create modified props with status
+    const nodeProps = {
+        ...props,
+        data: {
+            ...props.data,
+            status: nodeStatus
+        }
+    };
+
+    // Determine which icon to show (only one at a time)
+    const renderStatusIcon = () => {
+        // Priority order: Loader > Error > Success > Waiting
+        if (showLoader) {
+            return (
+                <CircularProgress
+                    size={24}
+                    thickness={2}
+                    sx={{
+                        position: 'absolute',
+                        top: -4,
+                        left: -4,
+                        color: '#4caf50'
+                    }}
+                />
+            );
+        } else if (!isConfigured) {
+            return (
+                <ErrorIcon
+                    fontSize="small"
+                    sx={{
+                        position: 'absolute',
+                        top: -4,
+                        right: -4,
+                        color: '#f44336'
+                    }}
+                />
+            );
+        } else if (hasPayload) {
+            return (
+                <CheckCircleIcon
+                    fontSize="small"
+                    sx={{
+                        position: 'absolute',
+                        top: -4,
+                        left: -4,
+                        color: '#4caf50'
+                    }}
+                />
+            );
+        } else {
+            return (
+                <PendingIcon
+                    fontSize="small"
+                    sx={{
+                        position: 'absolute',
+                        top: -4,
+                        right: -4,
+                        color: '#9e9e9e'
+                    }}
+                />
+            );
+        }
+    };
 
     return (
-        <BaseNode {...props}>
+        <BaseNode {...nodeProps}>
             <Tooltip title={lastUpdateText}>
                 <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-                    <Badge
-                        variant="dot"
-                        color={hasPayload ? "success" : "default"}
-                        overlap="circular"
-                        sx={{
-                            '& .MuiBadge-badge': {
-                                transform: 'scale(1.5)',
-                                animation: animateUpdate ? 'pulse 1.5s infinite' : 'none'
-                            },
-                            '@keyframes pulse': {
-                                '0%': { boxShadow: '0 0 0 0 rgba(76, 175, 80, 0.7)' },
-                                '70%': { boxShadow: '0 0 0 6px rgba(76, 175, 80, 0)' },
-                                '100%': { boxShadow: '0 0 0 0 rgba(76, 175, 80, 0)' }
-                            }
-                        }}
-                    >
-                        <WebhookIcon
-                            fontSize="small"
-                            color={hasPayload ? "primary" : "inherit"}
-                        />
-                    </Badge>
-                    {animateUpdate && (
-                        <CircularProgress
-                            size={24}
-                            thickness={2}
-                            sx={{
-                                position: 'absolute',
-                                top: -4,
-                                left: -4,
-                                color: '#4caf50'
-                            }}
-                        />
-                    )}
+                    <WebhookIcon
+                        fontSize="small"
+                        color={hasPayload ? "primary" : "inherit"}
+                    />
+                    {renderStatusIcon()}
                 </Box>
             </Tooltip>
         </BaseNode>
     );
 }
 
-// Export without memo to ensure component always updates when props change
-export default WebhookInputNode; 
+export default WebhookInputNode;
