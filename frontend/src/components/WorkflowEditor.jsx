@@ -10,6 +10,7 @@ import ReactFlow, {
     ReactFlowProvider,
     MarkerType, // Import MarkerType for edge arrows
     getBezierPath, // Import for custom edge
+    applyEdgeChanges, // Add this import for edge changes
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import axios from 'axios'; // For API calls
@@ -87,16 +88,16 @@ const nodeTypesList = [
     { type: 'model_config', label: 'Model Configuration' },
 ];
 
-// Mapping for React Flow
-const nodeTypes = {
-    defaultnode: DefaultNode,
-    trigger: InputNode,
-    llm: LlmNode,
-    code: CodeNode,
-    webhook_action: WebhookNode,
-    webhook_trigger: WebhookInputNode,
-    model_config: ModelConfigNode,
-};
+// Mapping for React Flow with enhanced props
+const getNodeTypes = (updateNodeData) => ({
+    defaultnode: (props) => <DefaultNode {...props} />,
+    trigger: (props) => <InputNode {...props} />,
+    llm: (props) => <LlmNode {...props} />,
+    code: (props) => <CodeNode {...props} />,
+    webhook_action: (props) => <WebhookNode {...props} />,
+    webhook_trigger: (props) => <WebhookInputNode {...props} updateNodeData={updateNodeData} />,
+    model_config: (props) => <ModelConfigNode {...props} />,
+});
 
 // Change the id_counter to ensure it's not reset when the component re-renders
 // Move it outside the component to make it truly stateful
@@ -383,7 +384,23 @@ function WorkflowEditor() {
             // If this is a webhook_trigger node, we need to register it to get a webhook ID
             if (nodeType === 'webhook_trigger') {
                 if (!workflowId) {
-                    alert("Please save your workflow first before adding a webhook trigger node.");
+                    // Add the node but mark it as requiring registration
+                    setNodes((nds) => {
+                        // Create a proper copy to avoid reference issues
+                        const newNodes = [...nds];
+                        // Add node with needsRegistration flag in data
+                        newNodes.push({
+                            ...newNode,
+                            data: {
+                                ...newNode.data,
+                                needsRegistration: true,
+                                label: 'Webhook Trigger (Save Required)'
+                            }
+                        });
+                        return newNodes;
+                    });
+
+                    console.log("Added webhook node that needs workflow save for registration");
                     return;
                 }
 
@@ -392,7 +409,13 @@ function WorkflowEditor() {
                     setNodes((nds) => {
                         // Create a proper copy to avoid reference issues
                         const newNodes = [...nds];
-                        newNodes.push(newNode);
+                        newNodes.push({
+                            ...newNode,
+                            data: {
+                                ...newNode.data,
+                                registering: true // Add a flag to show it's being registered
+                            }
+                        });
                         return newNodes;
                     });
 
@@ -413,7 +436,8 @@ function WorkflowEditor() {
                                     ...node,
                                     data: {
                                         ...node.data,
-                                        webhook_id: webhook_id
+                                        webhook_id: webhook_id,
+                                        registering: false
                                     }
                                 };
                             }
@@ -424,9 +448,25 @@ function WorkflowEditor() {
                     console.log(`Registered webhook ID ${webhook_id} for node ${newNode.id}`);
                 } catch (error) {
                     console.error('Error registering webhook:', error);
-                    // Remove the node if registration failed
-                    setNodes((nds) => nds.filter(node => node.id !== newNode.id));
-                    alert("Failed to register webhook. Please try again.");
+                    // Update the node to show registration failed
+                    setNodes((nds) => {
+                        return nds.map((node) => {
+                            if (node.id === newNode.id) {
+                                return {
+                                    ...node,
+                                    data: {
+                                        ...node.data,
+                                        registrationFailed: true,
+                                        registering: false,
+                                        label: 'Webhook Trigger (Registration Failed)'
+                                    }
+                                };
+                            }
+                            return node;
+                        });
+                    });
+
+                    alert("Failed to register webhook. Please try saving the workflow again.");
                 }
             } else {
                 // For non-webhook nodes, simply add the new node to the existing ones
@@ -591,13 +631,31 @@ function WorkflowEditor() {
                 setWorkflowId(workflowIdToLoad);
                 console.log("Workflow loaded successfully");
 
-                // Register webhooks for any webhook_trigger nodes without webhook_id
+                // Check for webhook trigger nodes that need registering
                 const webhookTriggerNodes = loadedNodes.filter(node =>
-                    node.type === 'webhook_trigger' && !node.data?.webhook_id
+                    node.type === 'webhook_trigger' && (!node.data?.webhook_id || node.data?.needsRegistration)
                 );
 
                 if (webhookTriggerNodes.length > 0) {
                     console.log(`Registering webhooks for ${webhookTriggerNodes.length} webhook trigger nodes`);
+
+                    // Update nodes to show registration in progress
+                    setNodes(nds => {
+                        return nds.map(node => {
+                            if (webhookTriggerNodes.some(wn => wn.id === node.id)) {
+                                return {
+                                    ...node,
+                                    data: {
+                                        ...node.data,
+                                        registering: true,
+                                        needsRegistration: false, // Clear the flag
+                                        label: node.data?.label?.replace(' (Save Required)', '') || 'Webhook Trigger'
+                                    }
+                                };
+                            }
+                            return node;
+                        });
+                    });
 
                     // Register webhooks for each node that needs one
                     for (const node of webhookTriggerNodes) {
@@ -617,7 +675,9 @@ function WorkflowEditor() {
                                             ...n,
                                             data: {
                                                 ...n.data,
-                                                webhook_id: webhook_id
+                                                webhook_id: webhook_id,
+                                                registering: false,
+                                                registrationFailed: false
                                             }
                                         };
                                     }
@@ -628,6 +688,24 @@ function WorkflowEditor() {
                             console.log(`Registered webhook ID ${webhook_id} for node ${node.id}`);
                         } catch (error) {
                             console.error(`Error registering webhook for node ${node.id}:`, error);
+
+                            // Update the node to show registration failed
+                            setNodes(nds => {
+                                return nds.map(n => {
+                                    if (n.id === node.id) {
+                                        return {
+                                            ...n,
+                                            data: {
+                                                ...n.data,
+                                                registering: false,
+                                                registrationFailed: true,
+                                                label: 'Webhook Trigger (Registration Failed)'
+                                            }
+                                        };
+                                    }
+                                    return n;
+                                });
+                            });
                         }
                     }
                 }
@@ -815,47 +893,60 @@ function WorkflowEditor() {
 
         changes.forEach(change => {
             if (change.type === 'remove') {
-                // Find the edge that's being removed
-                const edgeToRemove = edges.find(edge => edge.id === change.id);
-                if (edgeToRemove && edgeToRemove.type === 'modelConfig') {
-                    removedEdges.push(edgeToRemove);
+                const edge = edges.find(e => e.id === change.id);
+                if (edge) {
+                    removedEdges.push(edge);
                 }
             }
         });
 
-        // Apply the standard edge changes
-        onEdgesChange(changes);
-
-        // If any modelConfig edges were removed, update the corresponding LLM nodes
+        // Now handle edge removals that involve model config nodes
         if (removedEdges.length > 0) {
-            setNodes(currentNodes => {
-                return currentNodes.map(node => {
-                    // Check if this node is connected to any of the removed edges
-                    const connectedEdge = removedEdges.find(edge =>
-                        (edge.source === node.id || edge.target === node.id)
-                    );
+            // Create a new copy of nodes
+            const newNodes = [...nodes];
+            let nodesUpdated = false;
 
-                    if (connectedEdge && node.type === 'llm') {
-                        // If this is an LLM node connected to a removed modelConfig edge,
-                        // remove its model_config_id
-                        return {
-                            ...node,
+            // Look for edges that connect a model_config node to an llm node
+            for (const edge of removedEdges) {
+                const sourceNode = nodes.find(node => node.id === edge.source);
+                const targetNode = nodes.find(node => node.id === edge.target);
+
+                if (sourceNode?.type === 'model_config' && targetNode?.type === 'llm') {
+                    // This edge connects a model config to an LLM node
+                    // When removed, clear the model_config_id in the LLM node
+                    const targetNodeIndex = newNodes.findIndex(node => node.id === targetNode.id);
+                    if (targetNodeIndex !== -1 && newNodes[targetNodeIndex].data.model_config_id) {
+                        newNodes[targetNodeIndex] = {
+                            ...newNodes[targetNodeIndex],
                             data: {
-                                ...node.data,
-                                model_config_id: '' // Clear the model config reference
+                                ...newNodes[targetNodeIndex].data,
+                                model_config_id: null
                             }
                         };
+                        nodesUpdated = true;
                     }
-                    return node;
-                });
-            });
+                }
+            }
+
+            // Only update nodes if we made changes
+            if (nodesUpdated) {
+                setNodes(newNodes);
+            }
         }
-    }, [edges, onEdgesChange, setNodes]);
+
+        // Let the standard edge changes happen
+        setEdges(eds => applyEdgeChanges(changes, eds));
+    }, [edges, nodes, setEdges, setNodes]);
 
     // Add this effect to poll for webhook updates
     useEffect(() => {
         // Only poll if there are webhook_trigger nodes in the workflow
-        const webhookNodes = nodes.filter(node => node.type === 'webhook_trigger' && node.data?.webhook_id);
+        const webhookNodes = nodes.filter(node =>
+            node.type === 'webhook_trigger' &&
+            node.data?.webhook_id &&
+            !node.data?.registering &&
+            !node.data?.needsRegistration
+        );
 
         if (webhookNodes.length === 0 || !workflowId) return;
 
@@ -871,42 +962,48 @@ function WorkflowEditor() {
 
                 // Check each webhook node for updates
                 let hasUpdates = false;
-                const updatedNodes = nodes.map(node => {
-                    if (node.type === 'webhook_trigger' && node.data?.webhook_id) {
-                        // Find the matching node in the updated workflow
-                        const updatedNode = updatedWorkflow.nodes.find(n => n.id === node.id);
-                        // Check if the node has updates
-                        if (updatedNode && updatedNode.data?.last_payload) {
-                            const currentPayloadStr = JSON.stringify(node.data?.last_payload || null);
-                            const updatedPayloadStr = JSON.stringify(updatedNode.data.last_payload);
 
-                            if (currentPayloadStr !== updatedPayloadStr) {
-                                console.log("Webhook update detected:", updatedNode.data.last_payload);
-                                hasUpdates = true;
-                                return {
-                                    ...node,
-                                    data: {
-                                        ...node.data,
-                                        last_payload: updatedNode.data.last_payload
-                                    }
-                                };
-                            }
+                // Update nodes with any changes
+                setNodes(oldNodes => {
+                    // Create a copy of nodes to avoid reference issues
+                    const newNodes = [...oldNodes];
+
+                    // Process each webhook node
+                    for (const node of newNodes) {
+                        if (node.type !== 'webhook_trigger' || !node.data?.webhook_id) continue;
+
+                        // Find corresponding node in updated workflow
+                        const updatedNode = updatedWorkflow.nodes.find(n => n.id === node.id);
+                        if (!updatedNode) continue;
+
+                        // Check if there's a new payload or an updated payload
+                        const hasNewPayload =
+                            (updatedNode.data?.last_payload && !node.data?.last_payload) ||
+                            (updatedNode.data?.last_payload && node.data?.last_payload &&
+                                JSON.stringify(updatedNode.data.last_payload) !== JSON.stringify(node.data.last_payload));
+
+                        if (hasNewPayload) {
+                            console.log(`Node ${node.id} has new webhook data:`, updatedNode.data.last_payload);
+                            hasUpdates = true;
+
+                            // Update the node with new data
+                            node.data = {
+                                ...node.data,
+                                last_payload: updatedNode.data.last_payload
+                            };
                         }
                     }
-                    return node;
+
+                    return hasUpdates ? newNodes : oldNodes;
                 });
 
-                if (hasUpdates) {
-                    console.log("Updating nodes with webhook data");
-                    setNodes(updatedNodes);
-                }
             } catch (error) {
-                console.error('Error polling webhook updates:', error);
+                console.error("Error polling for webhook updates:", error);
             }
-        }, 2000); // Poll every 2 seconds instead of 5
+        }, 2000);
 
         return () => clearInterval(intervalId);
-    }, [nodes, workflowId, setNodes]);
+    }, [nodes, workflowId]);
 
     // Add a function to manually fetch webhook data for debugging
     const forceWebhookRefresh = async () => {
@@ -917,6 +1014,13 @@ function WorkflowEditor() {
 
         try {
             console.log("Forcing webhook data refresh...");
+
+            // First get the webhook debug info to see all payloads and mappings
+            const webhookDebugResponse = await axios.get('/api/webhooks/debug');
+            const webhookData = webhookDebugResponse.data;
+            console.log("Current webhook mappings:", webhookData.webhook_mappings);
+            console.log("Current webhook payloads:", webhookData.webhook_payloads);
+
             // Fetch the current workflow to get latest node data
             const response = await axios.get(`/api/workflows/${workflowId}`);
             const updatedWorkflow = response.data;
@@ -928,24 +1032,80 @@ function WorkflowEditor() {
 
             // Find all webhook nodes and update them
             let hasUpdates = false;
-            const webhookNodes = updatedWorkflow.nodes.filter(n => n.type === 'webhook_trigger');
-            console.log("Found webhook nodes:", webhookNodes.length);
 
+            // Get current webhook nodes in this workflow
+            const webhookNodes = nodes.filter(n => n.type === 'webhook_trigger');
+
+            if (webhookNodes.length === 0) {
+                alert("No webhook trigger nodes found in this workflow.");
+                return;
+            }
+
+            console.log("Webhook nodes in current workflow:", webhookNodes.map(n => ({ id: n.id, data: n.data })));
+
+            // Create a map of webhook mappings for this workflow
+            const workflowWebhooks = {};
+            Object.entries(webhookData.webhook_mappings).forEach(([webhookId, mapping]) => {
+                if (mapping.workflow_id === workflowId) {
+                    if (!workflowWebhooks[mapping.node_id]) {
+                        workflowWebhooks[mapping.node_id] = [];
+                    }
+                    workflowWebhooks[mapping.node_id].push({
+                        webhookId,
+                        payload: webhookData.webhook_payloads[webhookId]
+                    });
+                }
+            });
+
+            console.log("Webhook mappings for this workflow:", workflowWebhooks);
+
+            // Update nodes with webhook data
             const updatedNodes = nodes.map(node => {
                 if (node.type === 'webhook_trigger') {
-                    // Find the matching node in the updated workflow
-                    const updatedNode = updatedWorkflow.nodes.find(n => n.id === node.id);
-                    if (updatedNode) {
-                        console.log("Checking node", node.id, "current payload:", node.data?.last_payload, "updated payload:", updatedNode.data?.last_payload);
-                        if (updatedNode.data?.last_payload) {
-                            hasUpdates = true;
-                            return {
-                                ...node,
-                                data: {
-                                    ...node.data,
-                                    last_payload: updatedNode.data.last_payload
-                                }
-                            };
+                    console.log(`Processing node ${node.id}, webhook_id: ${node.data?.webhook_id}`);
+
+                    // Find webhooks for this node
+                    const nodeWebhooks = workflowWebhooks[node.id] || [];
+                    if (nodeWebhooks.length > 0) {
+                        // Use the most recent webhook payload
+                        const latestWebhook = nodeWebhooks[nodeWebhooks.length - 1];
+                        if (latestWebhook.payload) {
+                            console.log(`Found payload for node ${node.id}:`, latestWebhook.payload);
+
+                            // Check if this is new data
+                            const isNewData = JSON.stringify(node.data?.last_payload) !== JSON.stringify(latestWebhook.payload);
+
+                            if (isNewData) {
+                                hasUpdates = true;
+                                return {
+                                    ...node,
+                                    data: {
+                                        ...node.data,
+                                        last_payload: latestWebhook.payload,
+                                        webhook_id: node.data?.webhook_id || latestWebhook.webhookId
+                                    }
+                                };
+                            }
+                        }
+                    } else if (node.data?.webhook_id) {
+                        // Check if there's data for this specific webhook_id
+                        const webhookPayload = webhookData.webhook_payloads[node.data.webhook_id];
+                        if (webhookPayload) {
+                            console.log(`Found payload for webhook_id ${node.data.webhook_id}:`, webhookPayload);
+
+                            // Check if this is new data
+                            const isNewData = JSON.stringify(node.data?.last_payload) !== JSON.stringify(webhookPayload);
+
+                            if (isNewData) {
+                                hasUpdates = true;
+                                return {
+                                    ...node,
+                                    data: {
+                                        ...node.data,
+                                        last_payload: webhookPayload
+                                    }
+                                };
+                            }
                         }
                     }
                 }
@@ -958,13 +1118,16 @@ function WorkflowEditor() {
                 alert("Webhook data refreshed successfully!");
             } else {
                 console.log("No webhook updates found");
-                alert("No webhook updates found. Try sending data to the webhook URL first.");
+                alert("No new webhook data found. The webhook may not be correctly mapped to this node.");
             }
         } catch (error) {
             console.error('Error manually refreshing webhook data:', error);
             alert("Error refreshing webhook data: " + error.message);
         }
     };
+
+    // Create the node types with the updateNodeData function
+    const currentNodeTypes = React.useMemo(() => getNodeTypes(updateNodeData), [updateNodeData]);
 
     return (
         <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -1103,6 +1266,45 @@ function WorkflowEditor() {
                         >
                             Refresh Webhooks
                         </Button>
+                        <Button
+                            variant="outlined"
+                            color="success"
+                            onClick={() => {
+                                // Find all webhook trigger nodes
+                                const webhookNodes = nodes.filter(n => n.type === 'webhook_trigger' && n.data?.webhook_id);
+                                if (webhookNodes.length === 0) {
+                                    alert("No webhook nodes found with webhook IDs.");
+                                    return;
+                                }
+
+                                // Create dialog to select which webhook to test
+                                const webhookId = webhookNodes.length === 1
+                                    ? webhookNodes[0].data.webhook_id
+                                    : prompt(`Select a webhook ID to test:\n\n${webhookNodes.map(n =>
+                                        `${n.data.label || n.id}: ${n.data.webhook_id}`).join('\n')}`);
+
+                                if (!webhookId) return;
+
+                                const curlCommand = `curl -X POST ${window.location.origin}/webhooks/${webhookId} \\
+-H "Content-Type: application/json" \\
+-d '{
+  "event": "test.event",
+  "data": {
+    "user_id": "12345",
+    "email": "test@example.com",
+    "name": "Test User"
+  },
+  "timestamp": "${new Date().toISOString()}"
+}'`;
+                                navigator.clipboard.writeText(curlCommand);
+                                alert("Curl command copied to clipboard. Paste it in your terminal to test the webhook.");
+                            }}
+                            sx={{ ml: 1 }}
+                            title="Copy a curl command to test webhooks"
+                            disabled={!workflowId}
+                        >
+                            Test Webhook
+                        </Button>
                     </Toolbar>
                 </AppBar>
 
@@ -1123,7 +1325,7 @@ function WorkflowEditor() {
                         onConnect={onConnect}
                         onDragOver={onDragOver}
                         onDrop={onDrop}
-                        nodeTypes={nodeTypes}
+                        nodeTypes={currentNodeTypes}
                         edgeTypes={edgeTypes}
                         defaultEdgeOptions={defaultEdgeOptions}
                         defaultViewport={defaultViewport}

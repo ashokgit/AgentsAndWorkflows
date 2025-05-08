@@ -540,6 +540,8 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
             case 'webhook_trigger':
                 const webhookId = formData.webhook_id || 'Generating...';
                 const hasWebhookData = !!formData.last_payload;
+                const needsWorkflowSave = !formData.webhook_id && !workflowId;
+
                 return (
                     <>
                         <Box sx={{ mb: 3, p: 2, backgroundColor: '#f5f5f5', borderRadius: 1 }}>
@@ -554,6 +556,18 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                         marginLeft: '8px'
                                     }}>
                                         Ready
+                                    </span>
+                                }
+                                {needsWorkflowSave &&
+                                    <span style={{
+                                        backgroundColor: '#f44336',
+                                        color: 'white',
+                                        padding: '2px 8px',
+                                        borderRadius: '10px',
+                                        fontSize: '0.75rem',
+                                        marginLeft: '8px'
+                                    }}>
+                                        Save Required
                                     </span>
                                 }
                             </Typography>
@@ -573,7 +587,7 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                 }
                             </Typography>
                             {formData.webhook_id && (
-                                <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                                <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                                     <Button
                                         size="small"
                                         variant="outlined"
@@ -588,6 +602,28 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                         onClick={() => window.open(`${window.location.origin}/webhooks/${webhookId}`, '_blank')}
                                     >
                                         Open in New Tab
+                                    </Button>
+                                    <Button
+                                        size="small"
+                                        variant="outlined"
+                                        color="success"
+                                        onClick={() => {
+                                            const curlCommand = `curl -X POST ${window.location.origin}/webhooks/${webhookId} \\
+-H "Content-Type: application/json" \\
+-d '{
+  "event": "test.event",
+  "data": {
+    "user_id": "12345",
+    "email": "test@example.com",
+    "name": "Test User"
+  },
+  "timestamp": "${new Date().toISOString()}"
+}'`;
+                                            navigator.clipboard.writeText(curlCommand);
+                                            alert("Curl command copied to clipboard. Paste it in your terminal to test the webhook.");
+                                        }}
+                                    >
+                                        Copy Test Command
                                     </Button>
                                 </Box>
                             )}
@@ -615,7 +651,7 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                         fontSize: '0.75rem',
                                         marginLeft: '8px'
                                     }}>
-                                        Waiting
+                                        {needsWorkflowSave ? 'Save Required' : 'Waiting'}
                                     </span>
                                 }
                             </Typography>
@@ -629,13 +665,17 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                     mt: 2,
                                     maxHeight: '300px',
                                     overflow: 'auto',
-                                    border: hasWebhookData ? '1px solid #e0e0e0' : '1px dashed #9e9e9e'
+                                    border: hasWebhookData ? '1px solid #e0e0e0' :
+                                        (needsWorkflowSave ? '1px dashed #f44336' : '1px dashed #9e9e9e')
                                 }}
                             >
                                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
                                     {formData.last_payload ?
                                         JSON.stringify(formData.last_payload, null, 2) :
-                                        'No data received yet. Send a webhook to this URL to see the payload.'}
+                                        (needsWorkflowSave ?
+                                            'Save your workflow first to register webhook and receive data.' :
+                                            'No data received yet. Send a webhook to this URL to see the payload.')
+                                    }
                                 </pre>
                             </Box>
 
@@ -644,17 +684,26 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                 sx={{
                                     mt: 1,
                                     p: 1,
-                                    bgcolor: '#f0f4ff',
+                                    bgcolor: needsWorkflowSave ? '#fff0f0' : '#f0f4ff',
                                     borderRadius: 1,
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'space-between',
-                                    border: '1px dashed #2196f3',
+                                    border: needsWorkflowSave ? '1px dashed #f44336' : '1px dashed #2196f3',
                                     marginBottom: '10px'
                                 }}
                             >
-                                <Typography variant="caption" sx={{ fontWeight: 'bold', color: '#1976d2' }}>
-                                    <span role="img" aria-label="info">ℹ️</span> External webhook data may need a manual refresh
+                                <Typography variant="caption" sx={{
+                                    fontWeight: 'bold',
+                                    color: needsWorkflowSave ? '#d32f2f' : '#1976d2'
+                                }}>
+                                    <span role="img" aria-label="info">
+                                        {needsWorkflowSave ? '⚠️' : 'ℹ️'}
+                                    </span>
+                                    {needsWorkflowSave
+                                        ? ' Save workflow to register webhook and enable data reception'
+                                        : ' External webhook data may need a manual refresh'
+                                    }
                                 </Typography>
                             </Paper>
 
@@ -664,6 +713,11 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                 size="small"
                                 startIcon={<RefreshIcon />}
                                 onClick={async () => {
+                                    if (needsWorkflowSave) {
+                                        alert("Please save your workflow first to register this webhook.");
+                                        return;
+                                    }
+
                                     if (formData.webhook_id && node) {
                                         try {
                                             // Try to get workflow ID from props, URL path, or node data
@@ -700,16 +754,57 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                                 }));
                                             } else {
                                                 console.log("No webhook data found in updated node");
+
+                                                // Try to get webhook data directly from the debug endpoint
+                                                try {
+                                                    const webhookDebugResponse = await axios.get('/api/webhooks/debug');
+                                                    const webhookData = webhookDebugResponse.data;
+
+                                                    if (formData.webhook_id && webhookData.webhook_payloads[formData.webhook_id]) {
+                                                        console.log("Found data directly in webhook_payloads:",
+                                                            webhookData.webhook_payloads[formData.webhook_id]);
+
+                                                        // Update with data from webhook_payloads
+                                                        onUpdate(node.id, {
+                                                            last_payload: webhookData.webhook_payloads[formData.webhook_id]
+                                                        });
+
+                                                        // Also update local formData state
+                                                        setFormData(prevFormData => ({
+                                                            ...prevFormData,
+                                                            last_payload: webhookData.webhook_payloads[formData.webhook_id]
+                                                        }));
+
+                                                        return; // Success, no need to show alert
+                                                    }
+
+                                                    // No data found in webhook_payloads either
+                                                    const webhookEntries = Object.entries(webhookData.webhook_mappings || {})
+                                                        .filter(([, mapping]) => mapping.node_id === node.id)
+                                                        .map(([webhookId]) => webhookId);
+
+                                                    if (webhookEntries.length > 0) {
+                                                        console.log("Found webhook mappings for this node:", webhookEntries);
+                                                        alert(`Webhook is registered (ID: ${formData.webhook_id}) but no data has been sent to it yet. Try sending data to this webhook URL first.`);
+                                                    } else {
+                                                        console.log("No webhook mappings found for this node");
+                                                        alert(`No webhook data found. Make sure to send data to this webhook URL: ${window.location.origin}/webhooks/${formData.webhook_id}`);
+                                                    }
+                                                } catch (debugError) {
+                                                    console.error("Error fetching webhook debug data:", debugError);
+                                                    alert(`No webhook data found. Try sending data to this webhook URL: ${window.location.origin}/webhooks/${formData.webhook_id}`);
+                                                }
                                             }
                                         } catch (error) {
                                             console.error("Error manually refreshing webhook data:", error);
+                                            alert(`Error refreshing webhook data: ${error.message}`);
                                         }
                                     }
                                 }}
-                                disabled={!formData.webhook_id}
+                                disabled={!formData.webhook_id && !needsWorkflowSave}
                                 sx={{ mr: 1 }}
                             >
-                                Refresh Data
+                                {needsWorkflowSave ? 'Save Workflow First' : 'Refresh Data'}
                             </Button>
 
                             {hasWebhookData && (
