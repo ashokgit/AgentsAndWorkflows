@@ -544,6 +544,15 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
 
                 return (
                     <>
+                        <TextField
+                            label="Webhook Name"
+                            name="webhook_name"
+                            value={formData.webhook_name || ''}
+                            placeholder="Give this webhook a descriptive name"
+                            {...commonTextFieldProps}
+                            sx={{ mb: 2 }}
+                        />
+
                         <Box sx={{ mb: 3, p: 2, backgroundColor: '#f5f5f5', borderRadius: 1 }}>
                             <Typography variant="subtitle2" gutterBottom>
                                 Webhook URL {formData.webhook_id &&

@@ -383,6 +383,9 @@ function WorkflowEditor() {
 
             // If this is a webhook_trigger node, we need to register it to get a webhook ID
             if (nodeType === 'webhook_trigger') {
+                // Add a default webhook_name
+                newNode.data.webhook_name = `Webhook ${newNode.id}`;
+
                 if (!workflowId) {
                     // Add the node but mark it as requiring registration
                     setNodes((nds) => {
@@ -643,13 +646,17 @@ function WorkflowEditor() {
                     setNodes(nds => {
                         return nds.map(node => {
                             if (webhookTriggerNodes.some(wn => wn.id === node.id)) {
+                                // Make sure the webhook has a name
+                                const webhookName = node.data?.webhook_name || `Webhook ${node.id}`;
+
                                 return {
                                     ...node,
                                     data: {
                                         ...node.data,
+                                        webhook_name: webhookName, // Ensure webhook name is set
                                         registering: true,
                                         needsRegistration: false, // Clear the flag
-                                        label: node.data?.label?.replace(' (Save Required)', '') || 'Webhook Trigger'
+                                        label: node.data?.webhook_name || node.data?.label?.replace(' (Save Required)', '') || 'Webhook Trigger'
                                     }
                                 };
                             }
@@ -699,7 +706,7 @@ function WorkflowEditor() {
                                                 ...n.data,
                                                 registering: false,
                                                 registrationFailed: true,
-                                                label: 'Webhook Trigger (Registration Failed)'
+                                                label: n.data?.webhook_name || 'Webhook Trigger (Registration Failed)'
                                             }
                                         };
                                     }
