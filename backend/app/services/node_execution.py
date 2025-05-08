@@ -3,7 +3,9 @@ import time
 import requests
 import os
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+import base64
+from urllib.parse import urlencode
 
 from app.models.workflow import Node, Workflow, NodeExecutionResult
 from app.utils.persistence import webhook_payloads
@@ -66,6 +68,9 @@ def execute_node(node: Node, input_data: Any, workflow: Workflow) -> NodeExecuti
 
         elif node_type == 'webhook_action':
             output_data = execute_webhook_action_node(node, input_data)
+        
+        elif node_type == 'api_consumer':
+            output_data = execute_api_consumer_node(node, input_data)
         
         elif node_type == 'default':
             # Default node could just log the input
@@ -212,3 +217,203 @@ def execute_webhook_action_node(node: Node, input_data: Any) -> Any:
         logger.error(f"Webhook Action {node.id}: Request failed: {e}")
         # Propagate the error to stop workflow execution on this path
         raise ConnectionError(f"Failed to send webhook to {url}: {e}") 
+
+def execute_api_consumer_node(node: Node, input_data: Any) -> Any:
+    """Execute an API consumer node with support for various authentication methods"""
+    node_data = node.data
+    url = node_data.get('url')
+    method = node_data.get('method', 'GET').upper()
+    headers = node_data.get('headers', {})
+    body = node_data.get('body', None)
+    auth_type = node_data.get('auth_type', 'none')
+    timeout = int(node_data.get('timeout', 30000)) / 1000  # Convert from ms to seconds
+    retry_policy = node_data.get('retry_policy', 'none')
+    response_handling = node_data.get('response_handling', 'json')
+    
+    # Parse the headers if it's a string
+    if isinstance(headers, str):
+        try:
+            headers = json.loads(headers)
+        except json.JSONDecodeError:
+            headers = {}
+            logger.warning(f"API Consumer node {node.id}: Invalid headers JSON, using empty headers")
+    
+    # Process query parameters
+    query_params = node_data.get('query_params', '{}')
+    if isinstance(query_params, str):
+        try:
+            query_params = json.loads(query_params)
+        except json.JSONDecodeError:
+            query_params = {}
+            logger.warning(f"API Consumer node {node.id}: Invalid query params JSON, using empty params")
+    
+    # Build the full URL with query parameters
+    if query_params:
+        url_params = urlencode(query_params)
+        if '?' in url:
+            url = f"{url}&{url_params}"
+        else:
+            url = f"{url}?{url_params}"
+    
+    # Process the body if it's a string and meant to be JSON
+    if isinstance(body, str) and body.strip():
+        try:
+            body = json.loads(body)
+        except json.JSONDecodeError:
+            logger.warning(f"API Consumer node {node.id}: Invalid body JSON, sending as raw string")
+            # Keep as string if not valid JSON
+    
+    # Default to input data if body is empty
+    if not body:
+        body = input_data
+    
+    # Apply authentication based on the type
+    auth = None
+    if auth_type == 'api_key':
+        api_key_name = node_data.get('api_key_name', 'X-API-Key')
+        api_key_value = node_data.get('api_key_value', '')
+        api_key_location = node_data.get('api_key_location', 'header')
+        
+        if api_key_location == 'header':
+            headers[api_key_name] = api_key_value
+        elif api_key_location == 'query':
+            # Add to URL if not already added with other query params
+            param = urlencode({api_key_name: api_key_value})
+            if '?' in url:
+                url = f"{url}&{param}"
+            else:
+                url = f"{url}?{param}"
+    
+    elif auth_type == 'bearer':
+        bearer_token = node_data.get('bearer_token', '')
+        headers['Authorization'] = f"Bearer {bearer_token}"
+    
+    elif auth_type == 'basic':
+        username = node_data.get('basic_username', '')
+        password = node_data.get('basic_password', '')
+        auth = requests.auth.HTTPBasicAuth(username, password)
+    
+    elif auth_type == 'oauth2':
+        # For OAuth2, we would need to get a token first, but this is a simplified version
+        # In a real implementation, you would handle token acquisition, refresh, etc.
+        client_id = node_data.get('oauth_client_id', '')
+        client_secret = node_data.get('oauth_client_secret', '')
+        token_url = node_data.get('oauth_token_url', '')
+        scope = node_data.get('oauth_scope', '')
+        
+        # Simple implementation - get token and use it
+        if token_url:
+            try:
+                token_response = requests.post(
+                    token_url,
+                    data={
+                        'grant_type': 'client_credentials',
+                        'client_id': client_id,
+                        'client_secret': client_secret,
+                        'scope': scope
+                    },
+                    timeout=timeout
+                )
+                token_data = token_response.json()
+                access_token = token_data.get('access_token')
+                if access_token:
+                    headers['Authorization'] = f"Bearer {access_token}"
+                else:
+                    logger.error(f"API Consumer node {node.id}: Failed to get OAuth2 token")
+            except Exception as e:
+                logger.error(f"API Consumer node {node.id}: OAuth2 token acquisition failed: {e}")
+    
+    # Set up retry mechanism
+    max_retries = 0
+    if retry_policy == 'simple':
+        max_retries = 3
+    elif retry_policy == 'exponential':
+        max_retries = 5  # With exponential backoff
+    
+    # Execute the request with retries
+    attempt = 0
+    response = None
+    last_error = None
+    
+    while attempt <= max_retries:
+        try:
+            logger.info(f"API Consumer {node.id}: Sending {method} request to {url} (attempt {attempt+1})")
+            
+            # Set appropriate request arguments based on method
+            request_kwargs = {
+                'method': method,
+                'url': url,
+                'headers': headers,
+                'timeout': timeout,
+                'auth': auth
+            }
+            
+            # Add body for methods that support it
+            if method in ['POST', 'PUT', 'PATCH']:
+                if isinstance(body, (dict, list)):
+                    request_kwargs['json'] = body
+                else:
+                    request_kwargs['data'] = body
+            
+            response = requests.request(**request_kwargs)
+            response.raise_for_status()
+            break  # Success, exit retry loop
+            
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            logger.warning(f"API Consumer {node.id}: Request failed (attempt {attempt+1}): {e}")
+            
+            if attempt >= max_retries:
+                break
+            
+            # Calculate delay for exponential backoff
+            if retry_policy == 'exponential':
+                delay = (2 ** attempt) * 0.5  # 0.5, 1, 2, 4, 8 seconds
+                time.sleep(delay)
+            else:
+                time.sleep(1)  # Simple fixed delay
+            
+            attempt += 1
+    
+    # If all retries failed, raise the last error
+    if response is None:
+        logger.error(f"API Consumer {node.id}: All requests failed after {max_retries+1} attempts")
+        raise ConnectionError(f"Failed to connect to API: {last_error}")
+    
+    # Process the response based on the specified handling method
+    try:
+        if response_handling == 'json':
+            try:
+                response_data = response.json()
+            except json.JSONDecodeError:
+                logger.warning(f"API Consumer {node.id}: Could not parse response as JSON, falling back to text")
+                response_data = response.text
+        elif response_handling == 'text':
+            response_data = response.text
+        elif response_handling == 'binary':
+            # Encode binary data as base64 string
+            response_data = {'data': base64.b64encode(response.content).decode('utf-8'), 'encoding': 'base64'}
+        else:
+            # Default to treating as text
+            response_data = response.text
+        
+        output_data = {
+            "status_code": response.status_code,
+            "response": response_data,
+            "headers": dict(response.headers),
+            "url": response.url,
+            "request": {
+                "method": method,
+                "url": url,
+                "headers": headers,
+                # Don't include auth credentials in the output
+            },
+            "original_input": input_data
+        }
+        
+        logger.info(f"API Consumer {node.id}: Request successful with status {response.status_code}")
+        return output_data
+        
+    except Exception as e:
+        logger.error(f"API Consumer {node.id}: Error processing response: {e}")
+        raise 
