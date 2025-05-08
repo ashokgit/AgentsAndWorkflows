@@ -113,7 +113,7 @@ workflow_runs: Dict[str, List[Dict]] = {} # workflow_id -> list of run logs
 # --- Node Execution Logic (Placeholders/Registry) ---
 # We'll move this to separate files and make it dynamic
 
-def execute_node(node: Node, input_data: Any) -> NodeExecutionResult:
+def execute_node(node: Node, input_data: Any, workflow: Workflow) -> NodeExecutionResult:
     """Executes a single node based on its type."""
     logger.info(f"Executing node {node.id} ({node.type}) with input: {input_data}")
     
@@ -127,10 +127,30 @@ def execute_node(node: Node, input_data: Any) -> NodeExecutionResult:
             logger.info(f"Node {node.id} ({node_type}) passing data: {output_data}")
         
         elif node_type == 'llm':
+            # Check if this node references a model configuration
+            model_config_id = node_data.get('model_config_id')
+            model_config = None
+            
+            if model_config_id:
+                # Find the referenced model config node
+                model_config_nodes = [n for n in workflow.nodes if n.id == model_config_id and n.type == 'model_config']
+                if model_config_nodes:
+                    model_config = model_config_nodes[0].data
+                    logger.info(f"LLM Node {node.id}: Using model config '{model_config.get('config_name', 'Unnamed')}'")
+                else:
+                    logger.warning(f"LLM Node {node.id}: Referenced model config {model_config_id} not found")
+            
             prompt = node_data.get('prompt', 'What is the weather in London?')
-            model = node_data.get('model')
-            api_key = node_data.get('api_key')
-            custom_api_base = node_data.get('api_base') # Optional: For self-hosted/proxied models
+            
+            # Use model config if available, otherwise use node's own configuration
+            if model_config:
+                model = model_config.get('model')
+                api_key = model_config.get('api_key')
+                custom_api_base = model_config.get('api_base')
+            else:
+                model = node_data.get('model')
+                api_key = node_data.get('api_key')
+                custom_api_base = node_data.get('api_base')
 
             if not model:
                 raise ValueError("Model name is required for LLM node.")
@@ -184,6 +204,20 @@ def execute_node(node: Node, input_data: Any) -> NodeExecutionResult:
                  if "auth" in str(llm_exc).lower():
                       raise ConnectionError(f"Authentication failed for model {model}. Check API key.")
                  raise ConnectionError(f"Failed to call model {model}: {llm_exc}")
+        
+        elif node_type == 'model_config':
+            # Model config nodes just pass through data without executing anything
+            config_name = node_data.get('config_name', 'Unnamed Configuration')
+            model = node_data.get('model', 'unknown')
+            output_data = {
+                "status": "success",
+                "message": f"Model configuration '{config_name}' for model '{model}' is available",
+                "config": {
+                    "name": config_name,
+                    "model": model
+                }
+            }
+            logger.info(f"Model Config Node {node.id}: Passed through")
         
         elif node_type == 'code':
             # Placeholder - needs sandboxing and actual execution
@@ -386,7 +420,7 @@ async def execute_workflow_logic(workflow: Workflow, run_id: str, log_queue: asy
                 # NOTE: execute_node is still synchronous. For true async, 
                 # I/O bound operations within nodes (like LLM calls, webhooks)
                 # should be made async.
-                result = execute_node(node, current_data)
+                result = execute_node(node, current_data, workflow)
                 log_entry["output_data"] = result.output # Consider truncating
                 log_entry["status"] = "Success"
                 log_entry["step"] = f"Finished Node: {node.id} ({node.type})" # Update step name
@@ -480,6 +514,60 @@ def handle_webhook(webhook_id: str, data: Dict[str, Any]):
     # This requires a mapping mechanism (e.g., in DB)
     return {"message": "Webhook received (processing not implemented yet)"}
 
+@app.post("/api/model_config/test")
+async def test_model_config(model_config: Dict[str, Any]):
+    """Test a model configuration by sending a simple message."""
+    logger.info(f"Testing model configuration: {model_config.get('config_name')}")
+    
+    model = model_config.get('model')
+    api_key = model_config.get('api_key')
+    custom_api_base = model_config.get('api_base')
+    test_message = model_config.get('test_message', 'Hi')
+    
+    if not model:
+        raise HTTPException(status_code=400, detail="Model name is required")
+    
+    try:
+        # Use same logic as in execute_node for LLM, but simplified
+        if not api_key:
+            api_key = os.environ.get('OPENAI_API_KEY')
+            if not api_key:
+                raise ValueError(f"API Key not found in config or environment variables for model {model}")
+        
+        # Basic message structure
+        messages = [
+            {"role": "user", "content": test_message}
+        ]
+        
+        logger.info(f"Test: Calling model '{model}'...")
+        response = litellm_completion(
+            model=model,
+            messages=messages,
+            api_key=api_key,
+            api_base=custom_api_base if custom_api_base else None
+        )
+        
+        # Extract the response content
+        output_content = response.choices[0].message.content
+        
+        return {
+            "status": "success",
+            "response": output_content,
+            "model_used": model,
+            "usage": response.usage.dict() if hasattr(response, 'usage') and hasattr(response.usage, 'dict') else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error testing model configuration: {e}", exc_info=True)
+        error_msg = str(e)
+        if "auth" in error_msg.lower():
+            error_msg = f"Authentication failed for model {model}. Check API key."
+        
+        return {
+            "status": "error",
+            "error": error_msg,
+            "model": model
+        }
 
 # --- Main Execution ---
 
