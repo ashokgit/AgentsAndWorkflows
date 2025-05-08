@@ -1,0 +1,35 @@
+version: '3.8'
+
+# Development overrides
+services:
+  frontend:
+    # Override the build context (optional but good practice if dev Dockerfile differs)
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: builder
+      # Remove build args used for Nginx proxy, not needed for dev server proxy
+      args:
+        VITE_BACKEND_URL: "" # Set to empty or remove entirely
+
+    # Mount the frontend code directory for hot-reloading
+    volumes:
+      # Mount host ./frontend to /app in container
+      - ./frontend:/app
+      # Add node_modules as a separate anonymous volume inside container
+      # Prevents host node_modules from overwriting container's node_modules
+      # Important if host OS differs from container OS (e.g., macOS/Windows host, Linux container)
+      - /app/node_modules
+
+    # Change the command to run the Vite development server
+    # Use --host to expose it outside the container
+    command: npm run dev -- --host
+
+    # Change port mapping to expose the Vite dev server port (default 5173, but we set 3000 in vite.config.js)
+    ports:
+      - "3000:3000"
+    # Environment variables for the dev server (if needed, though proxy config is preferred)
+    # environment:
+    #  - VITE_BACKEND_URL=http://backend:8000
+
+    # Networks definition is inherited from docker-compose.yml 

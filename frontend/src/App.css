@@ -1,0 +1,8 @@
+/* Add styles specific to the App component here */
+.App {
+  text-align: center;
+}
+ 
+.App h1 {
+    margin: 20px 0;
+} 

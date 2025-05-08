@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic
+requests # For making HTTP requests in webhook node
+sse-starlette # For real-time log streaming
+litellm # For unified LLM access
+# Add other dependencies here as needed
+# e.g., requests, openai, anthropic-sdk, etc. 

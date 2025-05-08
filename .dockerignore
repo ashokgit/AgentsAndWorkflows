@@ -1,0 +1,33 @@
+# Docker specific
+Dockerfile
+docker-compose.yml
+
+# Python cache/dependencies
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/venv/
+backend/env/
+
+# Node dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.npm/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/ 

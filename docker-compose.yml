@@ -1,0 +1,45 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: workflow-backend
+    ports:
+      - "8000:8000"
+    # Add volume for development hot-reloading
+    # Maps ./backend on host to /app in container
+    volumes:
+      - ./backend:/app
+    # Optional: Add environment variables if needed
+    # environment:
+    #   - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
+    #   - OTHER_ENV_VAR=value
+    # Optional: Add volumes for development (mount code for hot reload)
+    # volumes:
+    #  - ./backend:/app
+    networks:
+      - workflow-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      container_name: workflow-frontend
+      # Pass the backend URL as a build argument
+      # Note: This URL is internal to the Docker network
+      args:
+        VITE_BACKEND_URL: http://backend:8000
+    # Remove port mapping from base file, it will be provided by override for development
+    # ports:
+    #   - "3000:80" # Map host port 3000 to container port 80 (Nginx default)
+    depends_on:
+      - backend # Ensure backend starts before frontend (useful but doesn't guarantee readiness)
+    networks:
+      - workflow-net
+
+networks:
+  workflow-net:
+    driver: bridge
+
+# Optional: Define volumes for persistent data (e.g., database)
+# volumes: #   postgres_data: 
