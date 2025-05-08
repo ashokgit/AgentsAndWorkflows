@@ -118,7 +118,7 @@ const safeJsonParse = (str, fallback = {}) => {
     }
 };
 
-function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge }) {
+function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, onRemoveEdge }) {
     const [formData, setFormData] = useState({});
     const [jsonValidity, setJsonValidity] = useState({ headers: true, body: true });
     const [fieldErrors, setFieldErrors] = useState({});
@@ -189,14 +189,22 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge })
             setJsonValidity(prev => ({ ...prev, [name]: isValidJson(value) }));
         }
 
-        // If this is a model_config_id selection in an LLM node, create an edge
-        if (name === 'model_config_id' && node?.type === 'llm' && value) {
-            // Create a connection between the model config and this LLM node
-            if (onCreateEdge) {
-                onCreateEdge(value, node.id);
+        // If this is a model_config_id change in an LLM node
+        if (name === 'model_config_id' && node?.type === 'llm') {
+            if (value) {
+                // Create a connection between the model config and this LLM node
+                if (onCreateEdge) {
+                    onCreateEdge(value, node.id);
+                }
+            } else {
+                // If model_config_id is being set to empty, remove any existing connection
+                // between the LLM node and any model config node
+                if (onRemoveEdge && formData.model_config_id) {
+                    onRemoveEdge(formData.model_config_id, node.id);
+                }
             }
         }
-    }, [fieldErrors, node, onCreateEdge]);
+    }, [fieldErrors, node, onCreateEdge, onRemoveEdge, formData.model_config_id]);
 
     const handleBlur = useCallback((event) => {
         if (!node) return;

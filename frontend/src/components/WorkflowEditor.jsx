@@ -623,6 +623,59 @@ function WorkflowEditor() {
         }
     }, [edges, setEdges]);
 
+    // Helper function to remove edges between model config and LLM nodes
+    const removeModelConfigEdge = useCallback((modelConfigId, llmNodeId) => {
+        setEdges(prevEdges => prevEdges.filter(edge => {
+            // Filter out any edge connecting these two nodes in either direction
+            return !((edge.source === modelConfigId && edge.target === llmNodeId) ||
+                (edge.source === llmNodeId && edge.target === modelConfigId));
+        }));
+    }, [setEdges]);
+
+    // Custom edges change handler to update nodes when model config edges are removed
+    const handleEdgesChange = useCallback((changes) => {
+        // Process the changes first to identify edge removals
+        const removedEdges = [];
+
+        changes.forEach(change => {
+            if (change.type === 'remove') {
+                // Find the edge that's being removed
+                const edgeToRemove = edges.find(edge => edge.id === change.id);
+                if (edgeToRemove && edgeToRemove.type === 'modelConfig') {
+                    removedEdges.push(edgeToRemove);
+                }
+            }
+        });
+
+        // Apply the standard edge changes
+        onEdgesChange(changes);
+
+        // If any modelConfig edges were removed, update the corresponding LLM nodes
+        if (removedEdges.length > 0) {
+            setNodes(currentNodes => {
+                return currentNodes.map(node => {
+                    // Check if this node is connected to any of the removed edges
+                    const connectedEdge = removedEdges.find(edge =>
+                        (edge.source === node.id || edge.target === node.id)
+                    );
+
+                    if (connectedEdge && node.type === 'llm') {
+                        // If this is an LLM node connected to a removed modelConfig edge,
+                        // remove its model_config_id
+                        return {
+                            ...node,
+                            data: {
+                                ...node.data,
+                                model_config_id: '' // Clear the model config reference
+                            }
+                        };
+                    }
+                    return node;
+                });
+            });
+        }
+    }, [edges, onEdgesChange, setNodes]);
+
     return (
         <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
             {/* Left Node Palette Drawer */}
@@ -734,7 +787,7 @@ function WorkflowEditor() {
                         nodes={nodes}
                         edges={edges}
                         onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
+                        onEdgesChange={handleEdgesChange}
                         onConnect={onConnect}
                         onDragOver={onDragOver}
                         onDrop={onDrop}
@@ -786,6 +839,7 @@ function WorkflowEditor() {
                 onClose={() => setConfigNode(null)}
                 open={!!configNode}
                 onCreateEdge={createModelConfigEdge}
+                onRemoveEdge={removeModelConfigEdge}
             />
         </Box>
     );
