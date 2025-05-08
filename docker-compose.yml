@@ -24,7 +24,6 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      container_name: workflow-frontend
       # Pass the backend URL as a build argument
       # Note: This URL is internal to the Docker network
       args:
@@ -32,6 +31,7 @@ services:
     # Remove port mapping from base file, it will be provided by override for development
     # ports:
     #   - "3000:80" # Map host port 3000 to container port 80 (Nginx default)
+    container_name: workflow-frontend
     depends_on:
       - backend # Ensure backend starts before frontend (useful but doesn't guarantee readiness)
     networks:
