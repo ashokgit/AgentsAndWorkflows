@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -17,6 +17,15 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Alert from '@mui/material/Alert';
 import axios from 'axios';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import Collapse from '@mui/material/Collapse';
+import Tooltip from '@mui/material/Tooltip';
+import LinkIcon from '@mui/icons-material/Link';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 
 const modalStyle = {
     position: 'absolute',
@@ -119,7 +128,321 @@ const safeJsonParse = (str, fallback = {}) => {
     }
 };
 
-function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, onRemoveEdge, workflowId }) {
+// New component for displaying available inputs from previous nodes
+const NodeInputSelector = ({ node, nodes, edges }) => {
+    const [expanded, setExpanded] = useState(false);
+    const [availableInputs, setAvailableInputs] = useState([]);
+
+    // Find all nodes that connect to this node (input nodes)
+    useEffect(() => {
+        if (!node || !nodes || !edges) return;
+
+        // Find all edges where this node is the target
+        const incomingEdges = edges.filter(edge => edge.target === node.id);
+
+        // Get all source nodes from these edges
+        const inputNodes = incomingEdges.map(edge =>
+            nodes.find(n => n.id === edge.source)
+        ).filter(Boolean);
+
+        // Extract output data from these nodes (excluding model_config nodes)
+        const inputs = inputNodes
+            .filter(inputNode => inputNode.type !== 'model_config') // Filter out model_config nodes
+            .map(inputNode => {
+                let outputData = {};
+
+                // Extract different data based on node type
+                switch (inputNode.type) {
+                    case 'llm':
+                        outputData = { text: 'LLM Response' };
+                        break;
+                    case 'webhook_trigger':
+                        outputData = inputNode.data?.last_payload || { event: 'webhook.event', data: { placeholder: 'value' } };
+                        break;
+                    case 'code':
+                        outputData = { result: 'Code Output' };
+                        break;
+                    default:
+                        outputData = inputNode.data || {};
+                }
+
+                // Create structured output data
+                return {
+                    nodeId: inputNode.id,
+                    nodeName: inputNode.data?.label || inputNode.type,
+                    nodeType: inputNode.type,
+                    data: outputData
+                };
+            });
+
+        setAvailableInputs(inputs);
+    }, [node, nodes, edges]);
+
+    // Function to generate reference key for a data path
+    const generateRefKey = (nodeId, path) => {
+        return `{{${nodeId}.${path}}}`;
+    };
+
+    // Recursive function to render input fields
+    const renderInputFields = (data, nodeId, path = '', level = 0) => {
+        if (!data || typeof data !== 'object') {
+            const refKey = generateRefKey(nodeId, path);
+            return (
+                <ListItem
+                    key={path}
+                    sx={{
+                        pl: 2 + level * 2,
+                        py: 0.5,
+                        cursor: 'grab',
+                        '&:hover': { bgcolor: 'rgba(0,0,0,0.04)' }
+                    }}
+                    draggable
+                    onDragStart={(e) => {
+                        e.dataTransfer.setData('text/plain', refKey);
+                        e.dataTransfer.effectAllowed = 'copy';
+                    }}
+                >
+                    <DragIndicatorIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
+                    <ListItemText
+                        primary={path.split('.').pop() || 'value'}
+                        secondary={String(data)}
+                        primaryTypographyProps={{ variant: 'body2' }}
+                        secondaryTypographyProps={{ variant: 'caption', sx: { wordBreak: 'break-all' } }}
+                    />
+                    <Tooltip title="Copy reference">
+                        <IconButton
+                            size="small"
+                            onClick={() => navigator.clipboard.writeText(refKey)}
+                        >
+                            <LinkIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                </ListItem>
+            );
+        }
+
+        return Object.entries(data).map(([key, value]) => {
+            const currentPath = path ? `${path}.${key}` : key;
+
+            if (typeof value === 'object' && value !== null) {
+                return (
+                    <React.Fragment key={currentPath}>
+                        <ListItem
+                            sx={{
+                                pl: 2 + level * 2,
+                                py: 0.5,
+                                cursor: 'grab',
+                                '&:hover': { bgcolor: 'rgba(0,0,0,0.04)' }
+                            }}
+                            draggable
+                            onDragStart={(e) => {
+                                const refKey = generateRefKey(nodeId, currentPath);
+                                e.dataTransfer.setData('text/plain', refKey);
+                                e.dataTransfer.effectAllowed = 'copy';
+                            }}
+                        >
+                            <DragIndicatorIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
+                            <ListItemText
+                                primary={key}
+                                primaryTypographyProps={{ variant: 'body2', fontWeight: 'medium' }}
+                            />
+                            <Tooltip title="Copy reference">
+                                <IconButton
+                                    size="small"
+                                    onClick={() => {
+                                        const refKey = generateRefKey(nodeId, currentPath);
+                                        navigator.clipboard.writeText(refKey);
+                                    }}
+                                >
+                                    <LinkIcon fontSize="small" />
+                                </IconButton>
+                            </Tooltip>
+                        </ListItem>
+                        {renderInputFields(value, nodeId, currentPath, level + 1)}
+                    </React.Fragment>
+                );
+            } else {
+                return renderInputFields(value, nodeId, currentPath, level);
+            }
+        });
+    };
+
+    if (availableInputs.length === 0) {
+        return null;
+    }
+
+    return (
+        <Box sx={{ mt: 3, mb: 2 }}>
+            <Paper
+                variant="outlined"
+                sx={{ borderRadius: 1, overflow: 'hidden' }}
+            >
+                <Button
+                    fullWidth
+                    onClick={() => setExpanded(!expanded)}
+                    endIcon={expanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                    sx={{
+                        justifyContent: 'space-between',
+                        textTransform: 'none',
+                        p: 1.5,
+                        borderRadius: 0
+                    }}
+                >
+                    <Typography variant="subtitle2">
+                        Available Inputs ({availableInputs.length})
+                    </Typography>
+                </Button>
+                <Collapse in={expanded}>
+                    <Divider />
+                    <Box sx={{ maxHeight: '250px', overflow: 'auto' }}>
+                        {availableInputs.map((input, index) => (
+                            <Box key={input.nodeId} sx={{ mb: 2 }}>
+                                <Typography
+                                    variant="subtitle2"
+                                    sx={{ px: 2, py: 1, bgcolor: 'background.default' }}
+                                >
+                                    {input.nodeName} ({input.nodeType})
+                                </Typography>
+
+                                {/* Add option to drag the entire node data at once */}
+                                <ListItem
+                                    sx={{
+                                        pl: 2,
+                                        py: 0.5,
+                                        cursor: 'grab',
+                                        bgcolor: 'rgba(25, 118, 210, 0.08)',
+                                        '&:hover': { bgcolor: 'rgba(25, 118, 210, 0.12)' }
+                                    }}
+                                    draggable
+                                    onDragStart={(e) => {
+                                        const refKey = `{{${input.nodeId}}}`;
+                                        e.dataTransfer.setData('text/plain', refKey);
+                                        e.dataTransfer.effectAllowed = 'copy';
+                                    }}
+                                >
+                                    <DragIndicatorIcon fontSize="small" sx={{ mr: 1, color: 'primary.main' }} />
+                                    <Tooltip
+                                        title={
+                                            <pre style={{ margin: 0, fontSize: '0.8rem', maxHeight: '200px', overflow: 'auto' }}>
+                                                {JSON.stringify(input.data, null, 2)}
+                                            </pre>
+                                        }
+                                        arrow
+                                        placement="right"
+                                    >
+                                        <ListItemText
+                                            primary="Entire node data"
+                                            secondary="Drag to use all data from this node"
+                                            primaryTypographyProps={{
+                                                variant: 'body2',
+                                                fontWeight: 'bold',
+                                                color: 'primary.main'
+                                            }}
+                                        />
+                                    </Tooltip>
+                                    <Tooltip title="Copy reference to all data">
+                                        <IconButton
+                                            size="small"
+                                            color="primary"
+                                            onClick={() => {
+                                                const refKey = `{{${input.nodeId}}}`;
+                                                navigator.clipboard.writeText(refKey);
+                                            }}
+                                        >
+                                            <LinkIcon fontSize="small" />
+                                        </IconButton>
+                                    </Tooltip>
+                                </ListItem>
+
+                                <List dense disablePadding>
+                                    {renderInputFields(input.data, input.nodeId)}
+                                </List>
+                                {index < availableInputs.length - 1 && <Divider />}
+                            </Box>
+                        ))}
+                    </Box>
+                    <Divider />
+                    <Box sx={{ p: 1.5, bgcolor: 'background.default' }}>
+                        <Typography variant="caption" color="text.secondary">
+                            Drag "Entire node data" to use all data or individual fields as needed.
+                            Click <LinkIcon fontSize="inherit" /> to copy references.
+                        </Typography>
+                    </Box>
+                </Collapse>
+            </Paper>
+        </Box>
+    );
+};
+
+// Modify text field to support drag and drop
+const DraggableTextField = ({ value, onChange, onBlur, ...props }) => {
+    const [isDragOver, setIsDragOver] = useState(false);
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+        if (!isDragOver) setIsDragOver(true);
+    };
+
+    const handleDragLeave = () => {
+        setIsDragOver(false);
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+
+        const droppedText = e.dataTransfer.getData('text/plain');
+        if (droppedText) {
+            // Get current cursor position
+            const cursorPosition = e.target.selectionStart;
+
+            // Insert at cursor position
+            const newValue = value.substring(0, cursorPosition) + droppedText + value.substring(cursorPosition);
+
+            // Create a synthetic event object
+            const syntheticEvent = {
+                target: {
+                    value: newValue,
+                    name: props.name
+                }
+            };
+
+            onChange(syntheticEvent);
+
+            // Trigger onBlur to save changes
+            if (onBlur) {
+                onBlur(syntheticEvent);
+            }
+        }
+    };
+
+    return (
+        <TextField
+            {...props}
+            value={value}
+            onChange={onChange}
+            onBlur={onBlur}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            InputProps={{
+                ...props.InputProps,
+                sx: {
+                    ...(props.InputProps?.sx || {}),
+                    ...(isDragOver && {
+                        border: '2px dashed #1976d2',
+                        backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                    })
+                }
+            }}
+        />
+    );
+};
+
+function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, onRemoveEdge, workflowId, edges }) {
     const [formData, setFormData] = useState({});
     const [jsonValidity, setJsonValidity] = useState({ headers: true, body: true });
     const [fieldErrors, setFieldErrors] = useState({});
@@ -317,7 +640,9 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
 
                 return (
                     <>
-                        <TextField
+                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
+
+                        <DraggableTextField
                             label="Prompt"
                             name="prompt"
                             multiline
@@ -325,6 +650,7 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                             value={formData.prompt || ''}
                             {...commonTextFieldProps}
                         />
+
                         {modelConfigs.length > 0 && (
                             <FormControl fullWidth margin="normal" size="small">
                                 <InputLabel id="model-config-select-label">Use Model Configuration</InputLabel>
@@ -469,7 +795,9 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
             case 'code':
                 return (
                     <>
-                        <TextField
+                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
+
+                        <DraggableTextField
                             label="Python Code"
                             name="code"
                             multiline
@@ -479,12 +807,14 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                             InputProps={{ sx: { fontFamily: 'monospace' } }}
                             {...commonTextFieldProps}
                         />
-                        <FormHelperText sx={{ ml: '10px' }}>Input available as `input_data` dict.</FormHelperText>
+                        <FormHelperText sx={{ ml: '10px' }}>Input available as `input_data` dict. Drag node outputs to use them.</FormHelperText>
                     </>
                 );
             case 'webhook_action':
                 return (
                     <>
+                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
+
                         <TextField
                             label="Webhook URL"
                             name="url"
@@ -503,7 +833,7 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                 name="method"
                                 value={formData.method || 'POST'}
                                 onChange={handleChange}
-                                onBlur={handleBlur} // Or maybe not needed for select?
+                                onBlur={handleBlur}
                             >
                                 <MenuItem value="POST">POST</MenuItem>
                                 <MenuItem value="GET">GET</MenuItem>
@@ -512,7 +842,7 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                 <MenuItem value="PATCH">PATCH</MenuItem>
                             </Select>
                         </FormControl>
-                        <TextField
+                        <DraggableTextField
                             label="Headers (JSON)"
                             name="headers"
                             multiline
@@ -523,14 +853,14 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                             InputProps={{ sx: { fontFamily: 'monospace' } }}
                             {...commonTextFieldProps}
                         />
-                        <TextField
+                        <DraggableTextField
                             label="Body (JSON)"
                             name="body"
                             multiline
                             rows={6}
                             value={formData.body || ''}
                             error={!jsonValidity.body || !!fieldErrors.body}
-                            helperText={!jsonValidity.body ? 'Invalid JSON' : fieldErrors.body || 'Defaults to node input if blank.'}
+                            helperText={!jsonValidity.body ? 'Invalid JSON' : fieldErrors.body || 'Defaults to node input if blank. Drag node outputs to create a custom body.'}
                             placeholder={'{ "key": "value" } '}
                             InputProps={{ sx: { fontFamily: 'monospace' } }}
                             {...commonTextFieldProps}
@@ -860,6 +1190,8 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
             case 'default':
                 return (
                     <>
+                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
+
                         <TextField
                             label="Label"
                             name="label"
@@ -872,6 +1204,8 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
             default:
                 return (
                     <>
+                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
+
                         <Typography variant="body2" color="textSecondary">No specific configuration available for node type: {node.type}</Typography>
                         <TextField
                             label="Data (JSON - Read Only)"

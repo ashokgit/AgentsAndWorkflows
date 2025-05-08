@@ -1382,6 +1382,7 @@ function WorkflowEditor() {
                 onCreateEdge={createModelConfigEdge}
                 onRemoveEdge={removeModelConfigEdge}
                 workflowId={workflowId}
+                edges={edges}
             />
         </Box>
     );
