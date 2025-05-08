@@ -31,6 +31,10 @@ import ListItemText from '@mui/material/ListItemText';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';
+import MenuItem from '@mui/material/MenuItem';
+import Select from '@mui/material/Select';
+import FormControl from '@mui/material/FormControl';
+import InputLabel from '@mui/material/InputLabel';
 
 // MUI Icons
 import InputIcon from '@mui/icons-material/Input';
@@ -44,6 +48,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import AccountTreeIcon from '@mui/icons-material/AccountTree'; // Icon for App Title
 import SettingsIcon from '@mui/icons-material/Settings';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 // Custom Node Components
 import DefaultNode from './nodes/DefaultNode';
@@ -181,6 +186,8 @@ function WorkflowEditor() {
     const [nodeExecutionStatus, setNodeExecutionStatus] = useState({}); // { nodeId: status }
     const eventSourceRef = useRef(null); // Ref to store the EventSource instance
     const [loadWorkflowIdInput, setLoadWorkflowIdInput] = useState(''); // State for load input
+    const [availableWorkflows, setAvailableWorkflows] = useState([]); // State for available workflows
+    const [selectedWorkflowId, setSelectedWorkflowId] = useState(''); // State for selected workflow from dropdown
 
     // Function to validate the workflow nodes
     const validateWorkflow = useCallback(() => {
@@ -458,15 +465,35 @@ function WorkflowEditor() {
             const response = await axios.post('/api/workflows', workflowData);
             alert(`Workflow saved successfully! ID: ${response.data.workflow_id}`);
             setWorkflowId(response.data.workflow_id); // Ensure ID is set after save
+
+            // Refresh the workflow list to include the newly saved workflow
+            await fetchWorkflows();
         } catch (error) {
             console.error("Error saving workflow:", error);
             alert(`Error saving workflow: ${error.response?.data?.detail || error.message}`);
         }
     };
 
+    // Function to fetch all workflows from the API
+    const fetchWorkflows = async () => {
+        try {
+            const response = await axios.get('/api/workflows');
+            setAvailableWorkflows(response.data || []);
+            console.log("Fetched workflows:", response.data);
+        } catch (error) {
+            console.error("Error fetching workflows:", error);
+        }
+    };
+
+    // Fetch workflows when the component mounts
+    useEffect(() => {
+        fetchWorkflows();
+    }, []);
+
     const handleLoadWorkflow = async () => {
         try {
-            const workflowIdToLoad = loadWorkflowIdInput || workflowId;
+            // Use selected workflow ID from dropdown if available, otherwise use the input field or current workflow ID
+            const workflowIdToLoad = selectedWorkflowId || loadWorkflowIdInput || workflowId;
             if (!workflowIdToLoad) {
                 console.error("No workflow ID to load");
                 return;
@@ -890,14 +917,47 @@ function WorkflowEditor() {
                         >
                             Save
                         </Button>
-                        <TextField
-                            label="Workflow ID to load"
+                        <FormControl
                             variant="outlined"
                             size="small"
-                            value={loadWorkflowIdInput}
-                            onChange={(e) => setLoadWorkflowIdInput(e.target.value)}
-                            sx={{ mr: 1, width: '200px', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 1, input: { color: 'white' }, label: { color: '#eee' } }}
-                        />
+                            sx={{
+                                mr: 1,
+                                minWidth: 200,
+                                backgroundColor: 'rgba(255,255,255,0.15)',
+                                borderRadius: 1
+                            }}
+                        >
+                            <InputLabel
+                                id="workflow-select-label"
+                                sx={{ color: '#eee' }}
+                            >
+                                Select Workflow
+                            </InputLabel>
+                            <Select
+                                labelId="workflow-select-label"
+                                value={selectedWorkflowId}
+                                onChange={(e) => setSelectedWorkflowId(e.target.value)}
+                                label="Select Workflow"
+                                sx={{ color: 'white' }}
+                            >
+                                <MenuItem value="">
+                                    <em>None</em>
+                                </MenuItem>
+                                {availableWorkflows.map((workflow) => (
+                                    <MenuItem key={workflow.id} value={workflow.id}>
+                                        {workflow.name} ({workflow.id})
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                        <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={fetchWorkflows}
+                            sx={{ mr: 1 }}
+                        >
+                            <RefreshIcon fontSize="small" />
+                        </Button>
                         <Button
                             variant="contained"
                             startIcon={<FolderOpenIcon />}
