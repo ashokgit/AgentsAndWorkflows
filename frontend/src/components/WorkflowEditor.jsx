@@ -1413,63 +1413,6 @@ function WorkflowEditor() {
                         >
                             Run Workflow
                         </Button>
-                        <Button
-                            variant="outlined"
-                            startIcon={<RefreshIcon />}
-                            onClick={forceWebhookRefresh}
-                            sx={{ ml: 2 }}
-                            title="Force refresh of webhook data from external calls"
-                        >
-                            Refresh Webhooks
-                        </Button>
-                        <Button
-                            variant="outlined"
-                            startIcon={<FitScreenIcon />}
-                            onClick={() => reactFlowInstance.fitView({ padding: 0.4, maxZoom: 0.8 })}
-                            sx={{ ml: 2 }}
-                            title="Fit view to show all nodes"
-                        >
-                            Fit View
-                        </Button>
-                        <Button
-                            variant="outlined"
-                            color="success"
-                            onClick={() => {
-                                // Find all webhook trigger nodes
-                                const webhookNodes = nodes.filter(n => n.type === 'webhook_trigger' && n.data?.webhook_id);
-                                if (webhookNodes.length === 0) {
-                                    alert("No webhook nodes found with webhook IDs.");
-                                    return;
-                                }
-
-                                // Create dialog to select which webhook to test
-                                const webhookId = webhookNodes.length === 1
-                                    ? webhookNodes[0].data.webhook_id
-                                    : prompt(`Select a webhook ID to test:\n\n${webhookNodes.map(n =>
-                                        `${n.data.label || n.id}: ${n.data.webhook_id}`).join('\n')}`);
-
-                                if (!webhookId) return;
-
-                                const curlCommand = `curl -X POST ${window.location.origin}/webhooks/${webhookId} \\
--H "Content-Type: application/json" \\
--d '{
-  "event": "test.event",
-  "data": {
-    "user_id": "12345",
-    "email": "test@example.com",
-    "name": "Test User"
-  },
-  "timestamp": "${new Date().toISOString()}"
-}'`;
-                                navigator.clipboard.writeText(curlCommand);
-                                alert("Curl command copied to clipboard. Paste it in your terminal to test the webhook.");
-                            }}
-                            sx={{ ml: 1 }}
-                            title="Copy a curl command to test webhooks"
-                            disabled={!workflowId}
-                        >
-                            Test Webhook
-                        </Button>
                     </Toolbar>
                 </AppBar>
 
