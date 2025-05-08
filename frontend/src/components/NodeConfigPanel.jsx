@@ -746,11 +746,15 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                             if (updatedNode && updatedNode.data?.last_payload) {
                                                 console.log("Found updated webhook data:", updatedNode.data.last_payload);
                                                 // Update parent component state
-                                                onUpdate(node.id, { last_payload: updatedNode.data.last_payload });
+                                                onUpdate(node.id, {
+                                                    last_payload: updatedNode.data.last_payload,
+                                                    dataLoaded: true
+                                                });
                                                 // Also update local formData state
                                                 setFormData(prevFormData => ({
                                                     ...prevFormData,
-                                                    last_payload: updatedNode.data.last_payload
+                                                    last_payload: updatedNode.data.last_payload,
+                                                    dataLoaded: true
                                                 }));
                                             } else {
                                                 console.log("No webhook data found in updated node");
@@ -766,13 +770,15 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
 
                                                         // Update with data from webhook_payloads
                                                         onUpdate(node.id, {
-                                                            last_payload: webhookData.webhook_payloads[formData.webhook_id]
+                                                            last_payload: webhookData.webhook_payloads[formData.webhook_id],
+                                                            dataLoaded: true
                                                         });
 
                                                         // Also update local formData state
                                                         setFormData(prevFormData => ({
                                                             ...prevFormData,
-                                                            last_payload: webhookData.webhook_payloads[formData.webhook_id]
+                                                            last_payload: webhookData.webhook_payloads[formData.webhook_id],
+                                                            dataLoaded: true
                                                         }));
 
                                                         return; // Success, no need to show alert

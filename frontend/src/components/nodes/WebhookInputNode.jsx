@@ -12,7 +12,7 @@ import axios from 'axios';
 
 function WebhookInputNode(props) {
     // Track if we've already seen the data
-    const [hasProcessedData, setHasProcessedData] = useState(false);
+    const [hasProcessedData, setHasProcessedData] = useState(!!props.data?.dataLoaded);
     const [updateTime, setUpdateTime] = useState(
         props.data?.last_payload ? Date.now() : null
     );
@@ -44,6 +44,15 @@ function WebhookInputNode(props) {
         }
     }, [isConfigured, hasPayload]);
 
+    // Effect to detect dataLoaded flag
+    useEffect(() => {
+        if (props.data?.dataLoaded && showLoader) {
+            console.log("WebhookInputNode: dataLoaded flag detected, stopping loader");
+            setShowLoader(false);
+            setHasProcessedData(true);
+        }
+    }, [props.data?.dataLoaded, showLoader]);
+
     // Function to check if there's data for this webhook ID
     const checkForWebhookData = async () => {
         if (!isConfigured || hasPayload || isCheckingData) return;
@@ -64,7 +73,8 @@ function WebhookInputNode(props) {
                 // Update the node with the data
                 if (props.updateNodeData) {
                     props.updateNodeData(props.id, {
-                        last_payload: webhookData.webhook_payloads[props.data.webhook_id]
+                        last_payload: webhookData.webhook_payloads[props.data.webhook_id],
+                        dataLoaded: true
                     });
                 } else {
                     console.warn("updateNodeData function not available - cannot update node data");
@@ -87,7 +97,8 @@ function WebhookInputNode(props) {
                         props.updateNodeData(props.id, {
                             last_payload: nodeWebhooks[0].payload,
                             // Update webhook_id if it's different
-                            webhook_id: props.data.webhook_id || nodeWebhooks[0].webhookId
+                            webhook_id: props.data.webhook_id || nodeWebhooks[0].webhookId,
+                            dataLoaded: true
                         });
                     }
                 } else {
@@ -116,6 +127,13 @@ function WebhookInputNode(props) {
         // Update node status based on current state
         setNodeStatus(calculateStatus());
 
+        // Check if data was explicitly marked as loaded from the configuration panel
+        if (props.data?.dataLoaded) {
+            setShowLoader(false);
+            setHasProcessedData(true);
+            return;
+        }
+
         // Get current payload JSON string
         const currentPayloadStr = props.data?.last_payload
             ? JSON.stringify(props.data.last_payload)
@@ -137,6 +155,11 @@ function WebhookInputNode(props) {
                 setShowLoader(false);
                 setNodeStatus('success');
                 setHasProcessedData(true);
+
+                // Update the dataLoaded flag in the node data
+                if (props.updateNodeData) {
+                    props.updateNodeData(props.id, { dataLoaded: true });
+                }
             }, 1500);
 
             return () => clearTimeout(timer);
@@ -146,8 +169,8 @@ function WebhookInputNode(props) {
             setHasProcessedData(true);
             setUpdateTime(updateTime || Date.now());
         }
-    }, [props.data?.last_payload, props.data?.webhook_id, isConfigured,
-        hasPayload, hasProcessedData, updateTime, calculateStatus]);
+    }, [props.data?.last_payload, props.data?.webhook_id, props.data?.dataLoaded, isConfigured,
+        hasPayload, hasProcessedData, updateTime, calculateStatus, props.updateNodeData, props.id]);
 
     // Format message text for each state
     const getStatusMessage = useCallback(() => {
@@ -203,7 +226,7 @@ function WebhookInputNode(props) {
                     />
                 )}
 
-                {showLoader && (
+                {showLoader && !(props.data?.dataLoaded) && (
                     <CircularProgress
                         size={16}
                         thickness={4}
@@ -212,7 +235,7 @@ function WebhookInputNode(props) {
                     />
                 )}
 
-                {hasPayload && !showLoader && (
+                {((hasPayload && !showLoader) || props.data?.dataLoaded) && (
                     <CheckCircleIcon
                         fontSize="small"
                         color="success"
