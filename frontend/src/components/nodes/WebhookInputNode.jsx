@@ -185,8 +185,7 @@ function WebhookInputNode(props) {
         ...props,
         data: {
             ...props.data,
-            // Use webhook_name for label if available, otherwise use the existing label
-            label: props.data?.webhook_name || props.data?.label || 'Webhook Trigger',
+            // Don't need to set label since BaseNode will use webhook_name directly
             status: nodeStatus,
             // Add validation message/error for the BaseNode tooltip
             validationError: needsSave ? "Save workflow to register webhook" :

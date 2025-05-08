@@ -271,7 +271,20 @@ function WorkflowEditor() {
                 if (node.id === nodeId) {
                     // Ensure data exists before merging
                     const currentData = node.data || {};
-                    return { ...node, data: { ...currentData, ...newData } };
+
+                    // If node_name is being updated, use it as the label
+                    let updatedData = { ...currentData, ...newData };
+
+                    // Update the label based on different node types
+                    if (newData.node_name) {
+                        updatedData.label = newData.node_name;
+                    } else if (newData.config_name && node.type === 'model_config') {
+                        updatedData.label = newData.config_name;
+                    } else if (newData.webhook_name && node.type === 'webhook_trigger') {
+                        updatedData.label = newData.webhook_name;
+                    }
+
+                    return { ...node, data: updatedData };
                 }
                 return node;
             })
@@ -378,8 +391,18 @@ function WorkflowEditor() {
                 id: getId(),
                 type: nodeType,
                 position,
-                data: { label: getDefaultLabelForNodeType(nodeType) },
+                data: {
+                    label: getDefaultLabelForNodeType(nodeType),
+                },
             };
+
+            // Set appropriate default names based on node type
+            if (nodeType === 'model_config') {
+                newNode.data.config_name = `Model Config ${newNode.id.split('_').pop()}`;
+            } else if (nodeType !== 'webhook_trigger') {
+                // For all other nodes except webhook_trigger (which is handled separately)
+                newNode.data.node_name = getDefaultLabelForNodeType(nodeType);
+            }
 
             // If this is a webhook_trigger node, we need to register it to get a webhook ID
             if (nodeType === 'webhook_trigger') {
@@ -397,7 +420,7 @@ function WorkflowEditor() {
                             data: {
                                 ...newNode.data,
                                 needsRegistration: true,
-                                label: 'Webhook Trigger (Save Required)'
+                                // No need to set label since BaseNode will use webhook_name
                             }
                         });
                         return newNodes;
@@ -461,7 +484,7 @@ function WorkflowEditor() {
                                         ...node.data,
                                         registrationFailed: true,
                                         registering: false,
-                                        label: 'Webhook Trigger (Registration Failed)'
+                                        // No need to set label since BaseNode will prioritize webhook_name
                                     }
                                 };
                             }
@@ -656,7 +679,7 @@ function WorkflowEditor() {
                                         webhook_name: webhookName, // Ensure webhook name is set
                                         registering: true,
                                         needsRegistration: false, // Clear the flag
-                                        label: node.data?.webhook_name || node.data?.label?.replace(' (Save Required)', '') || 'Webhook Trigger'
+                                        // No need to set label since BaseNode will use webhook_name
                                     }
                                 };
                             }
@@ -706,7 +729,7 @@ function WorkflowEditor() {
                                                 ...n.data,
                                                 registering: false,
                                                 registrationFailed: true,
-                                                label: n.data?.webhook_name || 'Webhook Trigger (Registration Failed)'
+                                                // No need to set label since BaseNode will prioritize webhook_name
                                             }
                                         };
                                     }

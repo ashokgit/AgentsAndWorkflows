@@ -69,7 +69,9 @@ const nodeVariants = {
 // BaseNode component
 const BaseNode = ({ data, selected, children }) => {
     const theme = useTheme();
-    const { label, status, validationError } = data || { label: 'Node' };
+    // Extract node_name, config_name, or webhook_name for display priority
+    const displayName = data?.node_name || data?.config_name || data?.webhook_name || data?.label || 'Node';
+    const { status, validationError } = data || {};
     const [currentStatus, setCurrentStatus] = useState(status || 'idle');
     const [dataUpdateEffect, setDataUpdateEffect] = useState(false);
     const [lastDataSnapshot, setLastDataSnapshot] = useState(null);
@@ -188,7 +190,7 @@ const BaseNode = ({ data, selected, children }) => {
                             textOverflow: 'ellipsis'
                         }}
                     >
-                        {label || 'Node'}
+                        {displayName}
                     </Typography>
 
                     {/* Validation Error Indicator */}
