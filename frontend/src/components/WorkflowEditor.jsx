@@ -98,8 +98,37 @@ const nodeTypes = {
     model_config: ModelConfigNode,
 };
 
+// Change the id_counter to ensure it's not reset when the component re-renders
+// Move it outside the component to make it truly stateful
 let id_counter = 0; // Use a different name to avoid potential conflicts
-const getId = () => `dndnode_${id_counter++}`;
+const getId = () => {
+    return `dndnode_${id_counter++}`;
+};
+
+// Helper function to update the ID counter based on existing nodes
+const updateIdCounterFromNodes = (nodesList) => {
+    if (!nodesList || nodesList.length === 0) return;
+
+    // Find all node IDs that follow our pattern
+    const dndNodeIds = nodesList
+        .map(node => node.id)
+        .filter(id => id.startsWith('dndnode_'));
+
+    // Extract the numeric parts and find the maximum
+    if (dndNodeIds.length > 0) {
+        const numericParts = dndNodeIds.map(id => {
+            const numPart = id.replace('dndnode_', '');
+            return parseInt(numPart, 10);
+        }).filter(num => !isNaN(num));
+
+        if (numericParts.length > 0) {
+            const maxId = Math.max(...numericParts);
+            // Set the counter to one more than the maximum ID
+            id_counter = maxId + 1;
+            console.log(`Updated node ID counter to ${id_counter} based on existing nodes`);
+        }
+    }
+};
 
 // Custom edge component for model configuration connections
 const ModelConfigEdge = ({ id, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style = {} }) => {
@@ -360,7 +389,12 @@ function WorkflowEditor() {
 
                 try {
                     // Add the node first so it appears immediately
-                    setNodes((nds) => nds.concat(newNode));
+                    setNodes((nds) => {
+                        // Create a proper copy to avoid reference issues
+                        const newNodes = [...nds];
+                        newNodes.push(newNode);
+                        return newNodes;
+                    });
 
                     // Then register the webhook
                     const response = await axios.post('/api/webhooks/register', {
@@ -372,6 +406,7 @@ function WorkflowEditor() {
 
                     // Update the node with the webhook ID
                     setNodes((nds) => {
+                        // Create a proper copy to avoid reference issues
                         return nds.map((node) => {
                             if (node.id === newNode.id) {
                                 return {
@@ -394,7 +429,13 @@ function WorkflowEditor() {
                     alert("Failed to register webhook. Please try again.");
                 }
             } else {
-                setNodes((nds) => nds.concat(newNode));
+                // For non-webhook nodes, simply add the new node to the existing ones
+                setNodes((nds) => {
+                    // Create a proper copy to avoid reference issues
+                    const newNodes = [...nds];
+                    newNodes.push(newNode);
+                    return newNodes;
+                });
             }
         },
         [screenToFlowPosition, workflowId, setNodes]
@@ -490,6 +531,16 @@ function WorkflowEditor() {
         fetchWorkflows();
     }, []);
 
+    // Update ID counter when available workflows are loaded
+    useEffect(() => {
+        if (availableWorkflows.length > 0) {
+            // Collect all nodes from all workflows
+            const allNodes = availableWorkflows.flatMap(workflow => workflow.nodes || []);
+            // Update the ID counter based on all existing nodes
+            updateIdCounterFromNodes(allNodes);
+        }
+    }, [availableWorkflows]);
+
     const handleLoadWorkflow = async () => {
         try {
             // Use selected workflow ID from dropdown if available, otherwise use the input field or current workflow ID
@@ -506,6 +557,9 @@ function WorkflowEditor() {
                 // Extract nodes and edges
                 const loadedNodes = workflow.nodes || [];
                 let loadedEdges = workflow.edges || [];
+
+                // Update the ID counter to avoid conflicts with existing node IDs
+                updateIdCounterFromNodes(loadedNodes);
 
                 // Reset node execution status
                 setNodeExecutionStatus({});
