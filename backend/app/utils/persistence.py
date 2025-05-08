@@ -57,7 +57,10 @@ def load_data_from_disk():
 def save_workflows_to_disk():
     """Save workflows to disk"""
     try:
-        workflows_json = [workflow.dict() for workflow in workflows_db.values()]
+        workflows_json = {}
+        for wf_id, workflow in workflows_db.items():
+            workflows_json[wf_id] = workflow.model_dump()
+        
         WORKFLOWS_FILE.write_text(json.dumps(workflows_json, indent=2, default=str))
         logger.info(f"Saved {len(workflows_db)} workflows to disk")
     except Exception as e:

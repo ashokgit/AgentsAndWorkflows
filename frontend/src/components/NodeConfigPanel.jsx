@@ -16,6 +16,7 @@ import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import Alert from '@mui/material/Alert';
 import axios from 'axios';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 const modalStyle = {
     position: 'absolute',
@@ -118,7 +119,7 @@ const safeJsonParse = (str, fallback = {}) => {
     }
 };
 
-function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, onRemoveEdge }) {
+function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, onRemoveEdge, workflowId }) {
     const [formData, setFormData] = useState({});
     const [jsonValidity, setJsonValidity] = useState({ headers: true, body: true });
     const [fieldErrors, setFieldErrors] = useState({});
@@ -618,12 +619,14 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                     </span>
                                 }
                             </Typography>
+
                             <Box
                                 sx={{
                                     p: 2,
                                     backgroundColor: '#f5f5f5',
                                     borderRadius: 1,
                                     mb: 2,
+                                    mt: 2,
                                     maxHeight: '300px',
                                     overflow: 'auto',
                                     border: hasWebhookData ? '1px solid #e0e0e0' : '1px dashed #9e9e9e'
@@ -636,41 +639,77 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                 </pre>
                             </Box>
 
-                            <Button
-                                variant="contained"
-                                color="primary"
-                                size="small"
-                                onClick={() => {
-                                    if (formData.webhook_id) {
-                                        const testPayload = {
-                                            message: "This is a test payload",
-                                            timestamp: new Date().toISOString(),
-                                            test: true,
-                                            sample_data: {
-                                                string_value: "example text",
-                                                number_value: 42,
-                                                boolean_value: true,
-                                                array_value: [1, 2, 3],
-                                                nested_object: {
-                                                    key: "value"
-                                                }
-                                            }
-                                        };
+                            <Paper
+                                elevation={1}
+                                sx={{
+                                    mt: 1,
+                                    p: 1,
+                                    bgcolor: '#f0f4ff',
+                                    borderRadius: 1,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    border: '1px dashed #2196f3',
+                                    marginBottom: '10px'
+                                }}
+                            >
+                                <Typography variant="caption" sx={{ fontWeight: 'bold', color: '#1976d2' }}>
+                                    <span role="img" aria-label="info">ℹ️</span> External webhook data may need a manual refresh
+                                </Typography>
+                            </Paper>
 
-                                        axios.post(`/webhooks/${formData.webhook_id}`, testPayload)
-                                            .then(response => {
-                                                console.log("Test webhook sent:", response.data);
-                                                // The server will push this to the node via SSE
-                                            })
-                                            .catch(error => {
-                                                console.error("Error sending test webhook:", error);
-                                            });
+                            <Button
+                                variant="outlined"
+                                color="info"
+                                size="small"
+                                startIcon={<RefreshIcon />}
+                                onClick={async () => {
+                                    if (formData.webhook_id && node) {
+                                        try {
+                                            // Try to get workflow ID from props, URL path, or node data
+                                            const currentWorkflowId = workflowId ||
+                                                window.location.pathname.split('/').pop() ||
+                                                formData.workflow_id;
+
+                                            if (!currentWorkflowId) {
+                                                console.error("Could not determine workflow ID for refresh");
+                                                alert("Could not determine workflow ID. Try saving the workflow first.");
+                                                return;
+                                            }
+
+                                            console.log("Manually refreshing webhook data for workflow:", currentWorkflowId);
+                                            // Fetch the current workflow to get latest node data
+                                            const response = await axios.get(`/api/workflows/${currentWorkflowId}`);
+                                            const workflow = response.data;
+
+                                            if (!workflow || !workflow.nodes) {
+                                                console.error("No workflow data returned");
+                                                return;
+                                            }
+
+                                            // Find this node in the workflow
+                                            const updatedNode = workflow.nodes.find(n => n.id === node.id);
+                                            if (updatedNode && updatedNode.data?.last_payload) {
+                                                console.log("Found updated webhook data:", updatedNode.data.last_payload);
+                                                // Update parent component state
+                                                onUpdate(node.id, { last_payload: updatedNode.data.last_payload });
+                                                // Also update local formData state
+                                                setFormData(prevFormData => ({
+                                                    ...prevFormData,
+                                                    last_payload: updatedNode.data.last_payload
+                                                }));
+                                            } else {
+                                                console.log("No webhook data found in updated node");
+                                            }
+                                        } catch (error) {
+                                            console.error("Error manually refreshing webhook data:", error);
+                                        }
                                     }
                                 }}
                                 disabled={!formData.webhook_id}
                                 sx={{ mr: 1 }}
                             >
-                                Send Test Webhook
+                                Refresh Data
                             </Button>
 
                             {hasWebhookData && (
@@ -681,6 +720,11 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                     onClick={() => {
                                         if (window.confirm("Clear the current webhook data?")) {
                                             onUpdate(node.id, { last_payload: null });
+                                            // Also update local formData state
+                                            setFormData(prevFormData => ({
+                                                ...prevFormData,
+                                                last_payload: null
+                                            }));
                                         }
                                     }}
                                 >

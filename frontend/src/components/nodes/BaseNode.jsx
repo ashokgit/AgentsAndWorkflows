@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Handle, Position } from 'reactflow';
 import Paper from '@mui/material/Paper';
 import Box from '@mui/material/Box';
@@ -53,16 +53,62 @@ const nodeVariants = {
         scale: 1,
         transition: { duration: 0.3 }
     },
+    dataUpdate: {
+        borderColor: '#4caf50',
+        boxShadow: '0 0 15px rgba(76,175,80,0.6)',
+        scale: 1.05,
+        transition: {
+            duration: 0.3,
+            repeat: 3,
+            repeatType: "reverse",
+            ease: "easeInOut"
+        }
+    }
 };
 
 // BaseNode component
 const BaseNode = ({ data, selected, children }) => {
     const theme = useTheme();
     const { label, status, validationError } = data || { label: 'Node' };
-    const currentStatus = status || 'idle';
+    const [currentStatus, setCurrentStatus] = useState(status || 'idle');
+    const [dataUpdateEffect, setDataUpdateEffect] = useState(false);
+    const [lastDataSnapshot, setLastDataSnapshot] = useState(null);
+
+    // Effect to detect changes in data
+    useEffect(() => {
+        if (!data) return;
+
+        const currentDataStr = JSON.stringify(data);
+
+        // Check if this is a webhook node and it has a last_payload
+        const isWebhookWithPayload = data.last_payload && data.last_payload !== lastDataSnapshot?.last_payload;
+
+        if (lastDataSnapshot && (isWebhookWithPayload || currentDataStr !== JSON.stringify(lastDataSnapshot))) {
+            // Trigger update animation
+            console.log("BaseNode: Data changed, triggering update effect");
+            setDataUpdateEffect(true);
+
+            // Reset after animation completes
+            const timer = setTimeout(() => {
+                setDataUpdateEffect(false);
+                setCurrentStatus(status || 'idle');
+            }, 1500);
+
+            return () => clearTimeout(timer);
+        }
+
+        // Update the snapshot
+        setLastDataSnapshot(data);
+        setCurrentStatus(status || 'idle');
+    }, [data, status, lastDataSnapshot]);
 
     // Determine animation variant based on status
     const getAnimationVariant = () => {
+        // Data update effect takes precedence
+        if (dataUpdateEffect) {
+            return 'dataUpdate';
+        }
+
         switch (currentStatus.toLowerCase()) {
             case 'running':
             case 'pending':
@@ -98,7 +144,8 @@ const BaseNode = ({ data, selected, children }) => {
                     border: `1px solid ${selected ? theme.palette.primary.main : validationError ? theme.palette.error.main : theme.palette.divider}`,
                     background: theme.palette.background.paper,
                     backgroundColor: status === 'Failed' ? theme.palette.error.lighter :
-                        validationError ? 'rgba(211,47,47,0.05)' : theme.palette.background.paper,
+                        validationError ? 'rgba(211,47,47,0.05)' :
+                            dataUpdateEffect ? 'rgba(76,175,80,0.08)' : theme.palette.background.paper,
                     minWidth: '180px',
                     maxWidth: '250px',
                     display: 'flex',
@@ -175,4 +222,5 @@ const BaseNode = ({ data, selected, children }) => {
     );
 };
 
-export default React.memo(BaseNode); 
+// Remove memo to ensure component always updates when props change
+export default BaseNode; 

@@ -859,9 +859,10 @@ function WorkflowEditor() {
 
         if (webhookNodes.length === 0 || !workflowId) return;
 
-        // Poll every 5 seconds
+        // Poll every 2 seconds (changed from 5 seconds for faster updates)
         const intervalId = setInterval(async () => {
             try {
+                console.log("Polling for webhook updates...");
                 // Fetch the current workflow to get latest node data
                 const response = await axios.get(`/api/workflows/${workflowId}`);
                 const updatedWorkflow = response.data;
@@ -874,9 +875,69 @@ function WorkflowEditor() {
                     if (node.type === 'webhook_trigger' && node.data?.webhook_id) {
                         // Find the matching node in the updated workflow
                         const updatedNode = updatedWorkflow.nodes.find(n => n.id === node.id);
-                        if (updatedNode && updatedNode.data?.last_payload &&
-                            JSON.stringify(updatedNode.data.last_payload) !== JSON.stringify(node.data.last_payload)) {
-                            // We have an update
+                        // Check if the node has updates
+                        if (updatedNode && updatedNode.data?.last_payload) {
+                            const currentPayloadStr = JSON.stringify(node.data?.last_payload || null);
+                            const updatedPayloadStr = JSON.stringify(updatedNode.data.last_payload);
+
+                            if (currentPayloadStr !== updatedPayloadStr) {
+                                console.log("Webhook update detected:", updatedNode.data.last_payload);
+                                hasUpdates = true;
+                                return {
+                                    ...node,
+                                    data: {
+                                        ...node.data,
+                                        last_payload: updatedNode.data.last_payload
+                                    }
+                                };
+                            }
+                        }
+                    }
+                    return node;
+                });
+
+                if (hasUpdates) {
+                    console.log("Updating nodes with webhook data");
+                    setNodes(updatedNodes);
+                }
+            } catch (error) {
+                console.error('Error polling webhook updates:', error);
+            }
+        }, 2000); // Poll every 2 seconds instead of 5
+
+        return () => clearInterval(intervalId);
+    }, [nodes, workflowId, setNodes]);
+
+    // Add a function to manually fetch webhook data for debugging
+    const forceWebhookRefresh = async () => {
+        if (!workflowId) {
+            alert("Please save your workflow first.");
+            return;
+        }
+
+        try {
+            console.log("Forcing webhook data refresh...");
+            // Fetch the current workflow to get latest node data
+            const response = await axios.get(`/api/workflows/${workflowId}`);
+            const updatedWorkflow = response.data;
+
+            if (!updatedWorkflow || !updatedWorkflow.nodes) {
+                alert("No workflow data found");
+                return;
+            }
+
+            // Find all webhook nodes and update them
+            let hasUpdates = false;
+            const webhookNodes = updatedWorkflow.nodes.filter(n => n.type === 'webhook_trigger');
+            console.log("Found webhook nodes:", webhookNodes.length);
+
+            const updatedNodes = nodes.map(node => {
+                if (node.type === 'webhook_trigger') {
+                    // Find the matching node in the updated workflow
+                    const updatedNode = updatedWorkflow.nodes.find(n => n.id === node.id);
+                    if (updatedNode) {
+                        console.log("Checking node", node.id, "current payload:", node.data?.last_payload, "updated payload:", updatedNode.data?.last_payload);
+                        if (updatedNode.data?.last_payload) {
                             hasUpdates = true;
                             return {
                                 ...node,
@@ -887,19 +948,23 @@ function WorkflowEditor() {
                             };
                         }
                     }
-                    return node;
-                });
-
-                if (hasUpdates) {
-                    setNodes(updatedNodes);
                 }
-            } catch (error) {
-                console.error('Error polling webhook updates:', error);
-            }
-        }, 5000);
+                return node;
+            });
 
-        return () => clearInterval(intervalId);
-    }, [nodes, workflowId]);
+            if (hasUpdates) {
+                console.log("Manually updating nodes with webhook data");
+                setNodes(updatedNodes);
+                alert("Webhook data refreshed successfully!");
+            } else {
+                console.log("No webhook updates found");
+                alert("No webhook updates found. Try sending data to the webhook URL first.");
+            }
+        } catch (error) {
+            console.error('Error manually refreshing webhook data:', error);
+            alert("Error refreshing webhook data: " + error.message);
+        }
+    };
 
     return (
         <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -1029,6 +1094,15 @@ function WorkflowEditor() {
                         >
                             Run Workflow
                         </Button>
+                        <Button
+                            variant="outlined"
+                            startIcon={<RefreshIcon />}
+                            onClick={forceWebhookRefresh}
+                            sx={{ ml: 2 }}
+                            title="Force refresh of webhook data from external calls"
+                        >
+                            Refresh Webhooks
+                        </Button>
                     </Toolbar>
                 </AppBar>
 
@@ -1098,6 +1172,7 @@ function WorkflowEditor() {
                 open={!!configNode}
                 onCreateEdge={createModelConfigEdge}
                 onRemoveEdge={removeModelConfigEdge}
+                workflowId={workflowId}
             />
         </Box>
     );
