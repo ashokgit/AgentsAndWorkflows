@@ -617,6 +617,80 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
         }
     };
 
+    const handleTestLLM = async () => {
+        if (!node || node.type !== 'llm') return;
+
+        // Check if model is specified or if a model_config_id is selected
+        if (!formData.model && !formData.model_config_id) {
+            setFieldErrors(prev => ({ ...prev, model: 'Model configuration is required for testing' }));
+            return;
+        }
+
+        setTestState({
+            loading: true,
+            result: null,
+            error: null
+        });
+
+        try {
+            // Get all workflow nodes to support model_config lookup and template variables
+            const allNodes = nodes?.map(n => ({
+                id: n.id,
+                type: n.type,
+                data: n.data
+            })) || [];
+
+            // Use a relative URL path for the backend API that works with Vite proxy
+            const response = await axios.post('/api/node/llm/test', {
+                node_data: formData,
+                workflow_nodes: allNodes
+            }, {
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                validateStatus: false // To handle all status codes properly
+            });
+
+            if (response.data.status === 'success') {
+                setTestState({
+                    loading: false,
+                    result: response.data,
+                    error: null
+                });
+
+                // Update the node with testSuccess flag
+                onUpdate(node.id, {
+                    testSuccess: true,
+                    status: 'success'
+                });
+            } else {
+                setTestState({
+                    loading: false,
+                    result: null,
+                    error: response.data.error || 'Test failed'
+                });
+
+                // Update node with error status
+                onUpdate(node.id, {
+                    testSuccess: false,
+                    status: 'failed'
+                });
+            }
+        } catch (error) {
+            setTestState({
+                loading: false,
+                result: null,
+                error: error.response?.data?.detail || error.message || 'Test failed'
+            });
+
+            // Update node with error status
+            onUpdate(node.id, {
+                testSuccess: false,
+                status: 'failed'
+            });
+        }
+    };
+
     // --- Render different forms based on node type ---
     const renderFormContent = () => {
         if (!node) return null;
@@ -725,6 +799,40 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                 />
                             </>
                         )}
+
+                        <Box sx={{ mt: 3, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <Button
+                                variant="contained"
+                                color="primary"
+                                onClick={handleTestLLM}
+                                disabled={testState.loading || (!formData.model && !formData.model_config_id)}
+                                startIcon={testState.loading ? <CircularProgress size={20} /> : null}
+                            >
+                                {testState.loading ? 'Testing...' : 'Test LLM Node'}
+                            </Button>
+
+                            {testState.result && (
+                                <Alert severity="success" sx={{ mt: 2 }}>
+                                    <Typography variant="subtitle2">Test Successful!</Typography>
+                                    <Typography variant="body2">
+                                        Response: {testState.result.response.substring(0, 100)}
+                                        {testState.result.response.length > 100 ? '...' : ''}
+                                    </Typography>
+                                    {testState.result.usage && (
+                                        <Typography variant="caption" display="block">
+                                            Tokens: {testState.result.usage.total_tokens || 'N/A'}
+                                        </Typography>
+                                    )}
+                                </Alert>
+                            )}
+
+                            {testState.error && (
+                                <Alert severity="error" sx={{ mt: 2 }}>
+                                    <Typography variant="subtitle2">Test Failed</Typography>
+                                    <Typography variant="body2">{testState.error}</Typography>
+                                </Alert>
+                            )}
+                        </Box>
                     </>
                 );
             case 'model_config':

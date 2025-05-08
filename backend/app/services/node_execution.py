@@ -3,7 +3,7 @@ import time
 import requests
 import os
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 import base64
 from urllib.parse import urlencode
 
@@ -417,3 +417,114 @@ def execute_api_consumer_node(node: Node, input_data: Any) -> Any:
     except Exception as e:
         logger.error(f"API Consumer {node.id}: Error processing response: {e}")
         raise 
+
+async def test_llm_node(node_data: Dict[str, Any], workflow_nodes: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Test an LLM node configuration by sending a simple message."""
+    logger.info(f"Testing LLM node configuration: {node_data.get('node_name', 'Unnamed LLM Node')}")
+    
+    # Check if this node references a model configuration
+    model_config_id = node_data.get('model_config_id')
+    model_config = None
+    
+    if model_config_id and workflow_nodes:
+        # Find the referenced model config node
+        model_config_nodes = [n for n in workflow_nodes if n['id'] == model_config_id and n['type'] == 'model_config']
+        if model_config_nodes:
+            model_config = model_config_nodes[0].get('data', {})
+            logger.info(f"LLM Node Test: Using model config '{model_config.get('config_name', 'Unnamed')}'")
+    
+    # Use the actual user-defined prompt
+    test_prompt = node_data.get('prompt', 'Say hello')
+    
+    # Create a node_data_map for template replacements
+    node_data_map = {}
+    if workflow_nodes:
+        for node in workflow_nodes:
+            node_id = node.get('id')
+            node_data_map[node_id] = node.get('data', {})
+            # For webhook_trigger nodes, we're particularly interested in the last_payload
+            if node.get('type') == 'webhook_trigger' and 'last_payload' in node.get('data', {}):
+                node_data_map[node_id] = node['data']['last_payload']
+    
+    # Replace template variables with actual node data
+    import re
+    
+    # Find all template variables like {{dndnode_X}}
+    template_vars = re.findall(r"{{([\w\d_-]+)}}", test_prompt)
+    
+    # Replace each template variable with actual data if available
+    for var in template_vars:
+        if var in node_data_map:
+            replacement = json.dumps(node_data_map[var], indent=2)
+            logger.info(f"LLM Node Test: Replacing template variable {{{{{var}}}}} with actual node data")
+            test_prompt = test_prompt.replace(f"{{{{{var}}}}}", replacement)
+        else:
+            logger.warning(f"LLM Node Test: Template variable {{{{{var}}}}} not found in workflow data")
+            # Create a fallback sample payload
+            sample_payload = {
+                "event": "test.event",
+                "data": {
+                    "message": "This is a test message for missing node data",
+                    "node_id": var
+                }
+            }
+            test_prompt = test_prompt.replace(f"{{{{{var}}}}}", json.dumps(sample_payload, indent=2))
+    
+    # Use model config if available, otherwise use node's own configuration
+    if model_config:
+        model = model_config.get('model')
+        api_key = model_config.get('api_key')
+        custom_api_base = model_config.get('api_base')
+    else:
+        model = node_data.get('model')
+        api_key = node_data.get('api_key')
+        custom_api_base = node_data.get('api_base')
+
+    if not model:
+        raise ValueError("Model name is required for LLM node testing")
+    
+    try:
+        # Use same logic as in execute_node for LLM, but simplified
+        if not api_key:
+            api_key = os.environ.get('OPENAI_API_KEY')
+            if not api_key:
+                raise ValueError(f"API Key not found in node data or environment variables for model {model}")
+        
+        # Sample input data for testing - simplified from what a real execution would use
+        input_data = {"test": "This is a test of the LLM node functionality"}
+        
+        # Basic message structure
+        messages = [
+            {"role": "system", "content": test_prompt}, 
+            {"role": "user", "content": f"Input Data:\n```json\n{json.dumps(input_data, indent=2)}\n```"}
+        ]
+        
+        logger.info(f"LLM Node Test: Calling model '{model}'...")
+        response = litellm_completion(
+            model=model,
+            messages=messages,
+            api_key=api_key,
+            api_base=custom_api_base if custom_api_base else None
+        )
+        
+        # Extract the response content
+        output_content = response.choices[0].message.content
+        
+        return {
+            "status": "success",
+            "response": output_content,
+            "model_used": model,
+            "usage": response.usage.dict() if hasattr(response, 'usage') and hasattr(response.usage, 'dict') else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error testing LLM node: {e}", exc_info=True)
+        error_msg = str(e)
+        if "auth" in error_msg.lower():
+            error_msg = f"Authentication failed for model {model}. Check API key."
+        
+        return {
+            "status": "error",
+            "error": error_msg,
+            "model": model
+        } 
