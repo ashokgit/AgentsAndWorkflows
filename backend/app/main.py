@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes import router
-from app.utils.persistence import load_data_from_disk, get_storage_summary
+from app.utils.persistence import load_workflows_from_disk, get_storage_summary
 
 # Configure logging
 logging.basicConfig(
@@ -37,7 +37,7 @@ async def read_root():
 async def startup_event():
     logger.info("Starting Mini Workflow Engine Backend...")
     # Load data from disk
-    load_data_from_disk()
+    load_workflows_from_disk()
     logger.info(f"Loaded {get_storage_summary()}")
 
 # Main entry point

@@ -22,6 +22,12 @@ class Workflow(BaseModel):
     edges: List[Edge]
     # We might store viewport info etc. from the frontend too
     metadata: Optional[Dict[str, Any]] = None
+    # Active state for the workflow
+    is_active: bool = False
+    # Flag to track if the workflow has been fully tested
+    tested: bool = False
+    # Timestamp when last tested successfully
+    last_tested: Optional[datetime] = None
     
     class Config:
         # Allow arbitrary types for data fields

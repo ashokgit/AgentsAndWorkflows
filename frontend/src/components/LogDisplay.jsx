@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Paper from '@mui/material/Paper';
@@ -13,321 +13,269 @@ import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import InfoIcon from '@mui/icons-material/Info';
 import CancelIcon from '@mui/icons-material/Cancel';
+import ScienceIcon from '@mui/icons-material/Science'; // Icon for test logs
 import CodeIcon from '@mui/icons-material/Code';
 import Tooltip from '@mui/material/Tooltip';
+import Link from '@mui/material/Link';
+import { styled } from '@mui/material/styles';
 
-// Basic styles - can be moved to a CSS file
-const logContainerStyle = {
+// Styled components for better organization
+const LogContainer = styled(Box)(({ theme }) => ({
     fontFamily: 'monospace',
     fontSize: '13px',
-    padding: '10px',
+    padding: theme.spacing(1),
     height: '100%',
     overflowY: 'auto',
     boxSizing: 'border-box',
     lineHeight: '1.4',
-};
+    backgroundColor: theme.palette.background.paper,
+}));
 
-const logEntryStyle = {
-    marginBottom: '8px',
-    paddingBottom: '8px',
-    borderBottom: '1px dashed #eee',
-};
+const LogEntryBox = styled(Box, {
+    shouldForwardProp: (prop) => prop !== 'isTestLog'
+})(({ theme, isTestLog }) => ({
+    marginBottom: theme.spacing(1),
+    paddingBottom: theme.spacing(1),
+    borderBottom: `1px dashed ${theme.palette.divider}`,
+    backgroundColor: isTestLog ? theme.palette.info.lightest : 'transparent',
+    borderRadius: isTestLog ? theme.shape.borderRadius : 0,
+    padding: isTestLog ? theme.spacing(0.5, 1) : 0,
+    position: 'relative',
+    overflow: 'hidden', // Needed for the test indicator
+    // Add a subtle indicator for test logs
+    ...(isTestLog && {
+        '&::before': {
+            content: '""',
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: '4px',
+            backgroundColor: theme.palette.info.main,
+        },
+        paddingLeft: theme.spacing(2), // Make space for the indicator line
+    })
+}));
 
-const getStatusColor = (status) => {
-    switch (status) {
-        case 'Success': return '#4CAF50'; // Green
-        case 'Failed': return '#F44336'; // Red
-        case 'Pending': return '#FF9800'; // Orange
-        case 'Aborted (Client Disconnected)': return '#757575'; // Grey
-        default: return '#333'; // Default text color
-    }
-};
-
-const statusStyle = (status) => ({
-    fontWeight: 'bold',
-    color: getStatusColor(status),
-    display: 'inline-block',
-    minWidth: '60px',
-    marginRight: '10px',
-});
-
-const timestampStyle = {
-    color: '#888',
-    fontSize: '11px',
-    marginRight: '10px',
-};
-
-const dataStyle = {
-    marginTop: '4px',
-    marginLeft: '20px',
-    padding: '5px',
-    backgroundColor: '#f9f9f9',
-    border: '1px solid #eee',
-    borderRadius: '3px',
+const DataPaper = styled(Paper)(({ theme }) => ({
+    padding: theme.spacing(1),
+    backgroundColor: theme.palette.grey[50],
+    fontFamily: 'monospace',
+    fontSize: '0.75rem',
+    marginTop: theme.spacing(0.5),
     whiteSpace: 'pre-wrap',
-    wordBreak: 'break-all',
-    maxHeight: '100px',
+    wordBreak: 'break-word',
+    maxHeight: '150px',
     overflowY: 'auto',
-    fontSize: '12px',
-};
+}));
 
-const errorStyle = {
-    ...dataStyle,
-    color: '#D32F2F',
-    backgroundColor: '#FFEBEE',
-    borderColor: '#FFCDD2',
-};
+const ErrorPaper = styled(DataPaper)(({ theme }) => ({
+    backgroundColor: theme.palette.error.lightest,
+    borderColor: theme.palette.error.light,
+    color: theme.palette.error.dark,
+}));
 
+// LogDisplay component
 function LogDisplay({ logs }) {
-    // Track expanded state for efficiency when there are many logs
     const [expandedLogIndex, setExpandedLogIndex] = useState(null);
+    const logEndRef = useRef(null); // Ref to scroll to the bottom
+
+    // Scroll to bottom when logs update
+    useEffect(() => {
+        logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [logs]);
 
     const handleExpandChange = (index) => (event, isExpanded) => {
         setExpandedLogIndex(isExpanded ? index : null);
     };
 
-    // Get the appropriate chip color based on status
+    // Get chip properties based on status
     const getStatusProps = (status) => {
-        switch (status) {
-            case 'Success':
-                return { color: 'success', icon: <CheckCircleIcon fontSize="small" /> };
-            case 'Failed':
-                return { color: 'error', icon: <ErrorIcon fontSize="small" /> };
-            case 'Pending':
-                return { color: 'warning', icon: <HourglassEmptyIcon fontSize="small" /> };
-            case 'Aborted (Client Disconnected)':
-                return { color: 'default', icon: <CancelIcon fontSize="small" /> };
+        switch (String(status).toLowerCase()) {
+            case 'success':
+            case 'completed':
+            case 'configured':
+            case 'triggered': // Added for webhook test signal
+                return { color: 'success', icon: <CheckCircleIcon sx={{ fontSize: 16 }} /> };
+            case 'failed':
+            case 'error':
+                return { color: 'error', icon: <ErrorIcon sx={{ fontSize: 16 }} /> };
+            case 'pending':
+                return { color: 'warning', icon: <HourglassEmptyIcon sx={{ fontSize: 16 }} /> };
+            case 'aborted':
+            case 'aborted (client disconnected)':
+                return { color: 'default', icon: <CancelIcon sx={{ fontSize: 16 }} />, variant: 'outlined' };
+            case 'waiting': // For webhook test waiting
+                return { color: 'secondary', icon: <HourglassEmptyIcon sx={{ fontSize: 16 }} /> };
             default:
-                return { color: 'info', icon: <InfoIcon fontSize="small" /> };
+                return { color: 'info', icon: <InfoIcon sx={{ fontSize: 16 }} />, variant: 'outlined' };
         }
     };
 
-    // Format timestamp from Unix seconds to readable time
+    // Format timestamp
     const formatTimestamp = (timestamp) => {
         if (!timestamp) return '-';
-        return new Date(timestamp * 1000).toLocaleTimeString();
+        try {
+            return new Date(timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        } catch (e) {
+            return 'Invalid Date';
+        }
     };
 
-    // Render log content including error or data details
-    const renderLogContent = (log) => {
-        const hasData = log.input_data || log.output_data;
-        const isError = log.status === 'Failed' && log.error;
+    // Render data (input/output/error) more concisely
+    const renderDataSection = (title, data, isError = false) => {
+        if (!data && !isError) return null;
+
+        let content = data;
+        if (typeof data === 'object' && data !== null) {
+            try {
+                content = JSON.stringify(data, null, 2);
+            } catch (e) {
+                content = String(data);
+            }
+        } else {
+            content = String(data);
+        }
+
+        const PaperComponent = isError ? ErrorPaper : DataPaper;
 
         return (
-            <Box sx={{ pl: 2 }}>
-                {isError && (
-                    <Paper
-                        variant="outlined"
-                        sx={{
-                            p: 1,
-                            mb: hasData ? 1 : 0,
-                            bgcolor: 'error.lightest',
-                            borderColor: 'error.light',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word'
-                        }}
-                    >
-                        <Typography variant="body2" component="div" color="error">
-                            <strong>Error:</strong> {String(log.error)}
-                        </Typography>
-                    </Paper>
-                )}
-
-                {hasData && (
-                    <Box>
-                        {log.input_data && (
-                            <Paper
-                                variant="outlined"
-                                sx={{
-                                    p: 1,
-                                    mb: log.output_data ? 1 : 0,
-                                    bgcolor: 'grey.50',
-                                    fontFamily: 'monospace',
-                                    fontSize: '0.75rem'
-                                }}
-                            >
-                                <Typography variant="caption" component="div" sx={{ mb: 0.5, fontWeight: 'bold' }}>
-                                    Input Data:
-                                </Typography>
-                                <Typography
-                                    component="pre"
-                                    sx={{
-                                        m: 0,
-                                        p: 0,
-                                        overflowX: 'auto',
-                                        whiteSpace: 'pre-wrap',
-                                        wordBreak: 'break-word'
-                                    }}
-                                >
-                                    {JSON.stringify(log.input_data, null, 2)}
-                                </Typography>
-                            </Paper>
-                        )}
-
-                        {log.output_data && (
-                            <Paper
-                                variant="outlined"
-                                sx={{
-                                    p: 1,
-                                    bgcolor: 'grey.50',
-                                    fontFamily: 'monospace',
-                                    fontSize: '0.75rem'
-                                }}
-                            >
-                                <Typography variant="caption" component="div" sx={{ mb: 0.5, fontWeight: 'bold' }}>
-                                    Output Data:
-                                </Typography>
-                                <Typography
-                                    component="pre"
-                                    sx={{
-                                        m: 0,
-                                        p: 0,
-                                        overflowX: 'auto',
-                                        whiteSpace: 'pre-wrap',
-                                        wordBreak: 'break-word'
-                                    }}
-                                >
-                                    {JSON.stringify(log.output_data, null, 2)}
-                                </Typography>
-                            </Paper>
-                        )}
-                    </Box>
-                )}
-            </Box>
+            <PaperComponent variant="outlined" sx={{ mt: 1 }}>
+                <Typography variant="caption" component="div" sx={{ mb: 0.5, fontWeight: 'bold' }}>
+                    {title}:
+                </Typography>
+                <Typography component="pre" sx={{ m: 0, p: 0 }}>
+                    {content}
+                </Typography>
+            </PaperComponent>
         );
     };
 
     if (!logs || logs.length === 0) {
         return (
-            <Box
-                sx={{
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    bgcolor: 'background.paper',
-                    p: 2
-                }}
-            >
+            <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 2 }}>
                 <Typography variant="body2" color="text.secondary">
-                    No logs available. Run the workflow to see execution logs.
+                    No logs available. Run or test the workflow.
                 </Typography>
             </Box>
         );
     }
 
     return (
-        <Box
-            sx={{
-                height: '100%',
-                overflowY: 'auto',
-                p: 1,
-                bgcolor: 'background.paper'
-            }}
-        >
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+        <LogContainer>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, px: 1 }}>
                 <Typography variant="subtitle2" fontWeight="medium">
                     Execution Logs
                 </Typography>
-                <Chip
-                    size="small"
-                    label={`${logs.length} entries`}
-                    color="primary"
-                    variant="outlined"
-                />
+                <Chip size="small" label={`${logs.length} entries`} variant="outlined" />
             </Box>
             <Divider sx={{ mb: 1 }} />
 
             {logs.map((log, index) => {
-                const { color, icon } = getStatusProps(log.status);
+                const { color, icon, variant = 'filled' } = getStatusProps(log.status);
                 const timestamp = formatTimestamp(log.timestamp);
-                const hasDetails = (log.status === 'Failed' && log.error) || log.input_data || log.output_data;
-                const logId = `${log.run_id || 'init'}-${index}`;
+                const isTest = log.is_test_log || false;
+
+                // Extract node ID if present in the step message
+                const nodeMatch = log.step?.match(/(?:Node:|Webhook:)\s*([\w-]+)/i);
+                const nodeIdFromStep = nodeMatch ? nodeMatch[1] : null;
+                const displayNodeId = log.node_id || nodeIdFromStep;
+
+                // Determine if details should be expandable
+                const hasDetails = log.error || log.input_data_summary || log.output_data_summary || log.input_data || log.output_data || log.message;
+                const isExpanded = expandedLogIndex === index;
 
                 return (
-                    <Box
-                        key={logId}
-                        sx={{
-                            mb: 0.75,
-                            bgcolor: index % 2 === 0 ? 'grey.50' : 'background.paper',
-                            borderRadius: 1,
-                            border: '1px solid',
-                            borderColor: 'divider'
-                        }}
-                    >
-                        <Box
+                    <LogEntryBox key={`${log.run_id || 'init'}-${index}-${log.timestamp}`} isTestLog={isTest}>
+                        <Accordion
+                            expanded={isExpanded}
+                            onChange={handleExpandChange(index)}
+                            disableGutters
+                            elevation={0}
                             sx={{
-                                p: 0.75,
-                                display: 'flex',
-                                alignItems: 'center',
-                                flexWrap: 'wrap',
-                                gap: 1
+                                backgroundColor: 'transparent',
+                                '&::before': { display: 'none' }, // Remove Accordion default border
+                                border: 'none'
                             }}
                         >
-                            <Typography variant="caption" component="span" color="text.secondary">
-                                {timestamp}
-                            </Typography>
-
-                            <Chip
-                                size="small"
-                                icon={icon}
-                                label={log.status || 'INFO'}
-                                color={color}
-                                variant="filled"
-                                sx={{ height: 24, fontWeight: 500 }}
-                            />
-
-                            <Typography variant="body2" component="span" sx={{ fontWeight: 500 }}>
-                                {log.step || 'Log Message'}
-                            </Typography>
-
-                            {log.node_id && (
-                                <Tooltip title="Node ID">
-                                    <Chip
-                                        size="small"
-                                        icon={<CodeIcon fontSize="small" />}
-                                        label={log.node_id}
-                                        color="info"
-                                        variant="outlined"
-                                        sx={{ height: 20, fontSize: '0.7rem' }}
-                                    />
-                                </Tooltip>
-                            )}
-                        </Box>
-
-                        {hasDetails && (
-                            <Accordion
-                                expanded={expandedLogIndex === index}
-                                onChange={handleExpandChange(index)}
-                                disableGutters
-                                elevation={0}
+                            <AccordionSummary
+                                expandIcon={hasDetails ? <ExpandMoreIcon /> : null}
+                                aria-controls={`log-content-${index}`}
+                                id={`log-header-${index}`}
                                 sx={{
-                                    '&:before': { display: 'none' }, // Remove default divider
-                                    '& .MuiAccordionSummary-root': {
-                                        minHeight: 28,
-                                        p: 0,
-                                        pl: 2,
-                                        pr: 1
-                                    }
+                                    minHeight: '36px', // Adjust min height
+                                    '& .MuiAccordionSummary-content': {
+                                        margin: '8px 0', // Adjust margin
+                                        alignItems: 'center',
+                                        overflow: 'hidden'
+                                    },
+                                    // Disable expansion if no details
+                                    cursor: hasDetails ? 'pointer' : 'default',
                                 }}
                             >
-                                <AccordionSummary
-                                    expandIcon={<ExpandMoreIcon fontSize="small" />}
-                                    sx={{ bgcolor: 'action.hover', borderTop: '1px solid', borderTopColor: 'divider' }}
-                                >
-                                    <Typography variant="caption" color="text.secondary">
-                                        {log.status === 'Failed' && log.error ? 'Error details' : 'Data'}
+                                <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1, overflow: 'hidden' }}>
+                                    {isTest && (
+                                        <Tooltip title="Test Run Log">
+                                            <ScienceIcon color="info" sx={{ fontSize: 16, mr: 0.5 }} />
+                                        </Tooltip>
+                                    )}
+                                    <Typography variant="caption" sx={{ mr: 1, color: 'text.secondary' }}>
+                                        {timestamp}
                                     </Typography>
-                                </AccordionSummary>
-                                <AccordionDetails sx={{ p: 1, pt: 0 }}>
-                                    {renderLogContent(log)}
+                                    <Chip
+                                        size="small"
+                                        label={log.status || 'Info'}
+                                        color={color}
+                                        icon={icon}
+                                        variant={variant}
+                                        sx={{ height: 20, mr: 1, fontWeight: 'medium' }}
+                                    />
+                                    <Typography
+                                        variant="body2"
+                                        component="span"
+                                        sx={{
+                                            flexGrow: 1,
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis'
+                                        }}
+                                    >
+                                        {log.step}
+                                    </Typography>
+                                    {displayNodeId && (
+                                        <Chip
+                                            label={displayNodeId}
+                                            size="small"
+                                            variant="outlined"
+                                            icon={<CodeIcon sx={{ fontSize: 14 }} />}
+                                            sx={{ ml: 1, height: 20, cursor: 'pointer' }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                console.log(`Node ID clicked: ${displayNodeId}`);
+                                                // Potentially add jump-to-node functionality here
+                                            }}
+                                        />
+                                    )}
+                                </Box>
+                            </AccordionSummary>
+                            {hasDetails && (
+                                <AccordionDetails sx={{ pt: 0, pb: 1, px: 1 }}>
+                                    {log.message && (
+                                        <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'text.secondary', mb: 1 }}>
+                                            {log.message}
+                                        </Typography>
+                                    )}
+                                    {renderDataSection("Error Details", log.error, true)}
+                                    {renderDataSection("Input Data", log.input_data_summary || log.input_data)}
+                                    {renderDataSection("Output Data", log.output_data_summary || log.output_data)}
                                 </AccordionDetails>
-                            </Accordion>
-                        )}
-                    </Box>
+                            )}
+                        </Accordion>
+                    </LogEntryBox>
                 );
             })}
-        </Box>
+            <div ref={logEndRef} /> {/* Element to scroll to */}
+        </LogContainer>
     );
 }
 

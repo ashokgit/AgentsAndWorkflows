@@ -36,6 +36,15 @@ import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
+import Switch from '@mui/material/Switch';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import BugReportIcon from '@mui/icons-material/BugReport'; // Test workflow icon
+import CheckCircleIcon from '@mui/icons-material/CheckCircle'; // For tested status
+import CloudOffIcon from '@mui/icons-material/CloudOff'; // For inactive status
+import CloudDoneIcon from '@mui/icons-material/CloudDone'; // For active status
+import Tooltip from '@mui/material/Tooltip';
+import Alert from '@mui/material/Alert';
+import LinearProgress from '@mui/material/LinearProgress';
 
 // MUI Icons
 import InputIcon from '@mui/icons-material/Input';
@@ -58,6 +67,7 @@ import InputOutlinedIcon from '@mui/icons-material/InputOutlined'; // For Inputs
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'; // For Configuration
 import LoopOutlinedIcon from '@mui/icons-material/LoopOutlined'; // For Processing
 import PublishOutlinedIcon from '@mui/icons-material/PublishOutlined'; // For External Actions
+import ScienceIcon from '@mui/icons-material/Science'; // Test icon
 
 // Custom Node Components
 import DefaultNode from './nodes/DefaultNode';
@@ -205,7 +215,7 @@ const edgeTypes = {
     modelConfig: ModelConfigEdge,
 };
 
-// Default edge options
+// Update default edge options to support different states
 const defaultEdgeOptions = {
     animated: true,
     type: 'smoothstep',
@@ -219,6 +229,44 @@ const defaultEdgeOptions = {
         strokeWidth: 1.5,
         stroke: '#757575', // Use theme color later if needed
     },
+};
+
+// Define edge styles for different statuses
+const getEdgeStyleForStatus = (status) => {
+    switch (status) {
+        case 'Success':
+            return {
+                stroke: '#4caf50', // Green
+                strokeWidth: 2,
+                animated: true
+            };
+        case 'Failed':
+            return {
+                stroke: '#f44336', // Red
+                strokeWidth: 2,
+                animated: false
+            };
+        case 'Running':
+        case 'Pending':
+            return {
+                stroke: '#2196f3', // Blue
+                strokeWidth: 2,
+                animated: true
+            };
+        case 'Waiting':
+            return {
+                stroke: '#ff9800', // Orange
+                strokeWidth: 2,
+                animated: true,
+                strokeDasharray: '5,5'
+            };
+        default:
+            return {
+                stroke: '#757575', // Default gray
+                strokeWidth: 1.5,
+                animated: false
+            };
+    }
 };
 
 // Default viewport settings - more zoomed out
@@ -272,6 +320,12 @@ function WorkflowEditor() {
         'External Actions': true,
         'Configuration': true
     });
+
+    // New state for workflow activation
+    const [isWorkflowActive, setIsWorkflowActive] = useState(false);
+    const [isWorkflowTested, setIsWorkflowTested] = useState(false);
+    const [lastTestedDate, setLastTestedDate] = useState(null);
+    const [isTestingWorkflow, setIsTestingWorkflow] = useState(false); // For UI loading state
 
     // Toggle category expansion
     const toggleCategory = (category) => {
@@ -1226,6 +1280,257 @@ function WorkflowEditor() {
     // Create the node types with the updateNodeData function
     const currentNodeTypes = React.useMemo(() => getNodeTypes(updateNodeData), [updateNodeData]);
 
+    // Fetch workflow details & update activation status
+    useEffect(() => {
+        if (workflowId) {
+            const fetchWorkflowDetails = async () => {
+                try {
+                    const response = await axios.get(`/api/workflows/${workflowId}`);
+                    const workflowData = response.data;
+
+                    // Update activation status from the fetched workflow
+                    setIsWorkflowActive(workflowData.is_active || false);
+                    setIsWorkflowTested(workflowData.tested || false);
+                    setLastTestedDate(workflowData.last_tested || null);
+
+                } catch (error) {
+                    console.error("Error fetching workflow details:", error);
+                }
+            };
+
+            fetchWorkflowDetails();
+        }
+    }, [workflowId]);
+
+    // Handle workflow activation toggle
+    const handleToggleActivation = async () => {
+        if (!workflowId) {
+            alert("Please save the workflow first.");
+            return;
+        }
+
+        // Don't allow activation if not tested
+        if (!isWorkflowActive && !isWorkflowTested) {
+            alert("You must successfully test the workflow before activating it.");
+            return;
+        }
+
+        try {
+            const response = await axios.post(`/api/workflows/${workflowId}/toggle_active`, {
+                active: !isWorkflowActive
+            });
+
+            setIsWorkflowActive(!isWorkflowActive);
+            alert(`Workflow ${!isWorkflowActive ? 'activated' : 'deactivated'} successfully!`);
+        } catch (error) {
+            console.error("Error toggling workflow activation:", error);
+            alert(`Error: ${error.response?.data?.detail || error.message}`);
+        }
+    };
+
+    // Test the entire workflow
+    const handleTestWorkflow = async () => {
+        if (!workflowId) {
+            alert("Please save the workflow first.");
+            return;
+        }
+
+        // Check for validation errors
+        const errors = validateWorkflow();
+        const errorCount = Object.keys(errors).length;
+
+        if (errorCount > 0) {
+            alert(`Cannot test workflow: ${errorCount} node${errorCount > 1 ? 's have' : ' has'} validation errors. Please fix them first.`);
+            return;
+        }
+
+        setIsTestingWorkflow(true);
+
+        try {
+            // Start the test
+            const response = await axios.post(`/api/workflows/${workflowId}/test`);
+            const runId = response.data.run_id;
+
+            if (!runId) throw new Error("Backend did not return a run_id.");
+
+            // Clear previous logs and statuses
+            setRunLogs([]); // Clear logs immediately
+            setNodeExecutionStatus({}); // Clear node statuses
+
+            // Add initial entry
+            setRunLogs([{
+                step: "Initiating Test Run...",
+                status: "Pending",
+                timestamp: Date.now() / 1000,
+                is_test: true
+            }]);
+
+            // Setup SSE connection for monitoring the test
+            if (eventSourceRef.current) {
+                console.log("Closing previous SSE connection.");
+                eventSourceRef.current.close();
+                eventSourceRef.current = null;
+            }
+
+            console.log(`Obtained test run_id: ${runId}. Connecting to SSE stream...`);
+
+            const sseUrl = `/api/workflows/${workflowId}/runs/${runId}/stream`;
+            const newEventSource = new EventSource(sseUrl);
+            eventSourceRef.current = newEventSource;
+
+            newEventSource.onmessage = (event) => {
+                try {
+                    const logEntry = JSON.parse(event.data);
+
+                    if (logEntry.step === "__END__") {
+                        newEventSource.close();
+                        eventSourceRef.current = null;
+                        setIsTestingWorkflow(false);
+
+                        // Fetch workflow details again to update tested status
+                        const fetchWorkflowDetails = async () => {
+                            try {
+                                const response = await axios.get(`/api/workflows/${workflowId}`);
+                                const workflowData = response.data;
+
+                                setIsWorkflowTested(workflowData.tested || false);
+                                setLastTestedDate(workflowData.last_tested || null);
+
+                                // If test was successful, show a message
+                                if (workflowData.tested) {
+                                    alert("Workflow tested successfully! You can now activate it.");
+                                }
+                            } catch (error) {
+                                console.error("Error fetching workflow details after test:", error);
+                            }
+                        };
+
+                        fetchWorkflowDetails();
+                        return;
+                    }
+
+                    // Update logs
+                    setRunLogs(prev => [...prev, logEntry]);
+
+                    // Update node status based on log entry
+                    if (logEntry.node_id) {
+                        setNodeExecutionStatus(prevStatus => ({
+                            ...prevStatus,
+                            [logEntry.node_id]: logEntry.status || 'Unknown'
+                        }));
+                    }
+
+                    // If it's the final step, don't clear right away to let the user see the results
+                    if (logEntry.step === 'End') {
+                        // Keep statuses visible for a while
+                        setTimeout(() => setNodeExecutionStatus({}), 5000);
+                    }
+
+                } catch (error) {
+                    console.error("Error parsing SSE test data:", error);
+                    setIsTestingWorkflow(false);
+                }
+            };
+
+            newEventSource.onerror = (error) => {
+                console.error("SSE test connection error:", error);
+                setIsTestingWorkflow(false);
+                if (newEventSource) newEventSource.close();
+                eventSourceRef.current = null;
+            };
+
+        } catch (error) {
+            console.error("Error testing workflow:", error);
+            setIsTestingWorkflow(false);
+            alert(`Error: ${error.response?.data?.detail || error.message}`);
+        }
+    };
+
+    // Update edges based on node execution status
+    useEffect(() => {
+        // Only update edges if there's execution status info
+        if (Object.keys(nodeExecutionStatus).length === 0) {
+            // Reset all edges to default style
+            setEdges(eds =>
+                eds.map(edge => ({
+                    ...edge,
+                    style: defaultEdgeOptions.style,
+                    animated: defaultEdgeOptions.animated,
+                }))
+            );
+            return;
+        }
+
+        // Find which edges should be highlighted based on node execution
+        setEdges(eds =>
+            eds.map(edge => {
+                const sourceStatus = nodeExecutionStatus[edge.source];
+                const targetStatus = nodeExecutionStatus[edge.target];
+
+                // Edge is active if source is done and target is running or pending
+                if (sourceStatus === 'Success' &&
+                    (targetStatus === 'Running' || targetStatus === 'Pending')) {
+                    const style = getEdgeStyleForStatus('Running');
+                    return {
+                        ...edge,
+                        style: {
+                            ...edge.style,
+                            stroke: style.stroke,
+                            strokeWidth: style.strokeWidth,
+                        },
+                        animated: style.animated,
+                    };
+                }
+
+                // Edge is successful if both source and target are successful
+                if (sourceStatus === 'Success' && targetStatus === 'Success') {
+                    const style = getEdgeStyleForStatus('Success');
+                    return {
+                        ...edge,
+                        style: {
+                            ...edge.style,
+                            stroke: style.stroke,
+                            strokeWidth: style.strokeWidth,
+                        },
+                        animated: style.animated,
+                    };
+                }
+
+                // Edge has failed if source succeeded but target failed
+                if (sourceStatus === 'Success' && targetStatus === 'Failed') {
+                    const style = getEdgeStyleForStatus('Failed');
+                    return {
+                        ...edge,
+                        style: {
+                            ...edge.style,
+                            stroke: style.stroke,
+                            strokeWidth: style.strokeWidth,
+                        },
+                        animated: style.animated,
+                    };
+                }
+
+                // Edge is waiting
+                if (sourceStatus === 'Success' && targetStatus === 'Waiting') {
+                    const style = getEdgeStyleForStatus('Waiting');
+                    return {
+                        ...edge,
+                        style: {
+                            ...edge.style,
+                            stroke: style.stroke,
+                            strokeWidth: style.strokeWidth,
+                            strokeDasharray: style.strokeDasharray,
+                        },
+                        animated: style.animated,
+                    };
+                }
+
+                // Default - no change to edge
+                return edge;
+            })
+        );
+    }, [nodeExecutionStatus, setEdges]);
+
     return (
         <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
             {/* Left Node Palette Drawer */}
@@ -1333,88 +1638,120 @@ function WorkflowEditor() {
             >
                 {/* Top AppBar */}
                 <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
-                    <Toolbar>
-                        <AccountTreeIcon sx={{ mr: 2 }} />
-                        <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-                            Mini Workflow Engine
-                        </Typography>
-                        <TextField
-                            label="Workflow Name"
-                            variant="outlined"
-                            size="small"
-                            value={workflowName}
-                            onChange={(e) => setWorkflowName(e.target.value)}
-                            sx={{ mr: 2, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 1, input: { color: 'white' }, label: { color: '#eee' } }}
-                        />
-                        <Button
-                            variant="contained"
-                            color="secondary"
-                            startIcon={<SaveIcon />}
-                            onClick={handleSaveWorkflow}
-                            sx={{ mr: 2 }}
-                        >
-                            Save
-                        </Button>
-                        <FormControl
-                            variant="outlined"
-                            size="small"
-                            sx={{
-                                mr: 1,
-                                minWidth: 200,
-                                backgroundColor: 'rgba(255,255,255,0.15)',
-                                borderRadius: 1
-                            }}
-                        >
-                            <InputLabel
-                                id="workflow-select-label"
-                                sx={{ color: '#eee' }}
-                            >
-                                Select Workflow
-                            </InputLabel>
-                            <Select
-                                labelId="workflow-select-label"
-                                value={selectedWorkflowId}
-                                onChange={(e) => setSelectedWorkflowId(e.target.value)}
-                                label="Select Workflow"
-                                sx={{ color: 'white' }}
-                            >
-                                <MenuItem value="">
-                                    <em>None</em>
-                                </MenuItem>
-                                {availableWorkflows.map((workflow) => (
-                                    <MenuItem key={workflow.id} value={workflow.id}>
-                                        {workflow.name} ({workflow.id})
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                        <Button
-                            variant="outlined"
-                            size="small"
-                            onClick={fetchWorkflows}
-                            sx={{ mr: 1 }}
-                        >
-                            <RefreshIcon fontSize="small" />
-                        </Button>
-                        <Button
-                            variant="contained"
-                            startIcon={<FolderOpenIcon />}
-                            onClick={handleLoadWorkflow}
-                            sx={{ mr: 2 }}
-                        >
-                            Load
-                        </Button>
-                        <Button
-                            variant="contained"
-                            color="success"
-                            startIcon={<PlayArrowIcon />}
-                            onClick={handleRunWorkflow}
-                            disabled={!workflowId}
-                        >
-                            Run Workflow
-                        </Button>
+                    <Toolbar sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        {/* Left side: Title */}
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <AccountTreeIcon sx={{ mr: 2 }} />
+                            <Typography variant="h6" noWrap component="div">
+                                Mini Workflow Engine
+                            </Typography>
+                        </Box>
+
+                        {/* Center: Workflow Name & Load */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <TextField
+                                label="Workflow Name"
+                                variant="outlined"
+                                size="small"
+                                value={workflowName}
+                                onChange={(e) => setWorkflowName(e.target.value)}
+                                sx={{ mr: 1, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 1, input: { color: 'white' }, label: { color: '#eee' } }}
+                            />
+                            <FormControl variant="outlined" size="small" sx={{ mr: 1, minWidth: 200, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 1 }}>
+                                <InputLabel id="workflow-select-label" sx={{ color: '#eee' }}>Select Workflow</InputLabel>
+                                <Select labelId="workflow-select-label" value={selectedWorkflowId} onChange={(e) => setSelectedWorkflowId(e.target.value)} label="Select Workflow" sx={{ color: 'white' }}>
+                                    <MenuItem value=""><em>None</em></MenuItem>
+                                    {availableWorkflows.map((wf) => <MenuItem key={wf.id} value={wf.id}>{wf.name} ({wf.id})</MenuItem>)}
+                                </Select>
+                            </FormControl>
+                            <Button variant="outlined" size="small" onClick={fetchWorkflows} sx={{ mr: 1, color: 'white', borderColor: 'rgba(255,255,255,0.5)' }}><RefreshIcon fontSize="small" /></Button>
+                            <Button variant="contained" startIcon={<FolderOpenIcon />} onClick={handleLoadWorkflow}>Load</Button>
+                            <Button variant="contained" color="secondary" startIcon={<SaveIcon />} onClick={handleSaveWorkflow} sx={{ ml: 1 }}>Save</Button>
+                        </Box>
+
+                        {/* Right side: Actions (Run, Test, Activate) */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Tooltip title="Run the workflow operationally. Requires workflow to be Active if triggered by webhook.">
+                                <span> {/* Span needed for disabled button tooltip */}
+                                    <Button
+                                        variant="contained"
+                                        color="success"
+                                        startIcon={<PlayArrowIcon />}
+                                        onClick={handleRunWorkflow}
+                                        disabled={!workflowId || isTestingWorkflow} // Disable if no workflow or currently testing
+                                    >
+                                        Run Workflow
+                                    </Button>
+                                </span>
+                            </Tooltip>
+                            <Tooltip title="Test the full workflow logic. Waits for webhook data if needed. Marks workflow as tested on success.">
+                                <span>
+                                    <Button
+                                        variant="outlined"
+                                        color="info"
+                                        startIcon={<ScienceIcon />} // Changed icon
+                                        onClick={handleTestWorkflow}
+                                        disabled={!workflowId || isTestingWorkflow}
+                                        sx={{ color: 'white', borderColor: 'rgba(255,255,255,0.7)' }}
+                                    >
+                                        Test Workflow
+                                    </Button>
+                                </span>
+                            </Tooltip>
+                            <Tooltip title={!isWorkflowTested ? "Workflow must be tested successfully first" : (isWorkflowActive ? "Deactivate Workflow" : "Activate Workflow")}>
+                                <span>
+                                    <FormControlLabel
+                                        control={
+                                            <Switch
+                                                checked={isWorkflowActive}
+                                                onChange={handleToggleActivation}
+                                                disabled={!isWorkflowTested || !workflowId || isTestingWorkflow}
+                                                color="success"
+                                            />
+                                        }
+                                        label={
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                                {isWorkflowActive ? <CloudDoneIcon color="success" /> : <CloudOffIcon color="disabled" />}
+                                                <Typography variant="body2">{isWorkflowActive ? "Active" : "Inactive"}</Typography>
+                                            </Box>
+                                        }
+                                        sx={{ color: 'white' }}
+                                    />
+                                </span>
+                            </Tooltip>
+                        </Box>
                     </Toolbar>
                 </AppBar>
+
+                {/* Testing progress indicator */}
+                {isTestingWorkflow && (
+                    <LinearProgress color="info" />
+                )}
+
+                {/* Test status indicators */}
+                {workflowId && (
+                    <Box sx={{ p: 1, borderBottom: '1px solid #e0e0e0', backgroundColor: '#f5f5f5' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {isWorkflowTested ? (
+                                <Alert
+                                    icon={<CheckCircleIcon fontSize="inherit" />}
+                                    severity="success"
+                                    sx={{ py: 0 }}
+                                >
+                                    Workflow tested successfully
+                                    {lastTestedDate && ` on ${new Date(lastTestedDate).toLocaleString()}`}
+                                </Alert>
+                            ) : (
+                                <Alert
+                                    severity="warning"
+                                    sx={{ py: 0 }}
+                                >
+                                    Workflow not tested yet. Test the workflow before activating.
+                                </Alert>
+                            )}
+                        </Box>
+                    </Box>
+                )}
 
                 {/* React Flow Editor Area */}
                 <Box

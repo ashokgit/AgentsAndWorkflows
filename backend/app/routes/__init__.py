@@ -1,18 +1,16 @@
 from fastapi import APIRouter
+from app.routes import workflows, webhooks, node, api_consumer, model_config
+from app.routes.webhooks_ui import router as webhooks_ui_router
 
-from app.routes.workflows import router as workflows_router
-from app.routes.webhooks import router_api as webhooks_api_router
-from app.routes.webhooks import router_webhooks as webhooks_router
-from app.routes.model_config import router as model_config_router
-from app.routes.api_consumer import router as api_consumer_router
-from app.routes.node import router as node_router
-
+# Main router that includes all other routers
 router = APIRouter()
 
-# Include all routers
-router.include_router(workflows_router)
-router.include_router(webhooks_api_router)
-router.include_router(webhooks_router)
-router.include_router(model_config_router)
-router.include_router(api_consumer_router)
-router.include_router(node_router)
+# Register all routers
+router.include_router(workflows.router)
+router.include_router(webhooks.router)
+router.include_router(node.router)
+router.include_router(api_consumer.router)
+router.include_router(model_config.router)
+
+# Register UI-facing webhook router (non-api prefix)
+router.include_router(webhooks_ui_router)
