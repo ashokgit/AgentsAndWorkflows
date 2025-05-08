@@ -642,6 +642,14 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                     <>
                         <NodeInputSelector node={node} nodes={nodes} edges={edges} />
 
+                        <TextField
+                            label="Name"
+                            name="node_name"
+                            value={formData.node_name || ''}
+                            placeholder="Give this LLM node a descriptive name"
+                            {...commonTextFieldProps}
+                        />
+
                         <DraggableTextField
                             label="Prompt"
                             name="prompt"
@@ -797,6 +805,14 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                     <>
                         <NodeInputSelector node={node} nodes={nodes} edges={edges} />
 
+                        <TextField
+                            label="Name"
+                            name="node_name"
+                            value={formData.node_name || ''}
+                            placeholder="Give this code node a descriptive name"
+                            {...commonTextFieldProps}
+                        />
+
                         <DraggableTextField
                             label="Python Code"
                             name="code"
@@ -814,6 +830,14 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                 return (
                     <>
                         <NodeInputSelector node={node} nodes={nodes} edges={edges} />
+
+                        <TextField
+                            label="Name"
+                            name="node_name"
+                            value={formData.node_name || ''}
+                            placeholder="Give this webhook a descriptive name"
+                            {...commonTextFieldProps}
+                        />
 
                         <TextField
                             label="Webhook URL"
@@ -1193,12 +1217,13 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                         <NodeInputSelector node={node} nodes={nodes} edges={edges} />
 
                         <TextField
-                            label="Label"
-                            name="label"
-                            value={formData.label || node.type || ''}
+                            label="Name"
+                            name="node_name"
+                            value={formData.node_name || formData.label || node.type || ''}
+                            placeholder="Give this node a descriptive name"
                             {...commonTextFieldProps}
                         />
-                        <Typography variant="caption" color="textSecondary">Basic node label.</Typography>
+                        <Typography variant="caption" color="textSecondary">Node name for identification in the workflow.</Typography>
                     </>
                 )
             default:
