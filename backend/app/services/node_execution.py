@@ -46,45 +46,15 @@ def execute_node(node: Node, input_data: Any, workflow: Workflow, run_outputs: D
     node_data = node.data
 
     try:
-        if node_type == 'webhook_trigger':
-            # For a webhook trigger, the relevant data is typically the input_data provided
-            # to this execution step (which might have come from the actual webhook callback
-            # or from a test signal). We don't need to re-fetch from persistence here.
-            output_data = input_data 
-            logger.info(f"Webhook Trigger Node {node.id} ({node_label}): Using provided input data.")
-
-        elif node_type == 'llm':
+        # Execute the node based on its type
+        if node_type == 'llm':
             output_data = execute_llm_node(node, input_data, workflow, run_outputs)
-        
-        elif node_type == 'model_config':
-            # Model config nodes are primarily data holders, not operational steps.
-            # They shouldn't block the flow. Their data is accessed by linked LLM nodes.
-            # We return a success message, but this node type is handled differently in the execution loop.
-            config_name = node_data.get('config_name', 'Unnamed Configuration')
-            model = node_data.get('model', 'unknown')
-            output_data = {
-                "status": "Configured",
-                "message": f"Model configuration '{config_name}' ({model}) processed.",
-                "config_data": node_data # Pass the config data itself
-            }
-            logger.info(f"Model Config Node {node.id} ({config_name}): Data processed (not executed in flow).")
-        
         elif node_type == 'code':
-            # Placeholder - needs sandboxing and actual execution
-            code = node_data.get('code', 'pass')
-            # Simulate execution, potentially using input_data
-            try:
-                # Safer simulation: just report the code and input
-                output_data = {"result": f"Simulated execution of code: {code[:50]}...", "input_received_summary": str(input_data)[:100]}
-                logger.info(f"Simulating Code node {node.id}: {output_data}")
-                time.sleep(0.1) # Simulate work
-            except Exception as code_exec_e:
-                logger.error(f"Simulated Code node {node.id}: Error during execution: {code_exec_e}")
-                output_data = {"error": f"Error executing code: {code_exec_e}", "original_input": input_data}
-                raise # Re-raise to mark node as failed
-
+            output_data = execute_code_node(node_data, input_data)
         elif node_type == 'api_consumer':
             output_data = execute_api_consumer_node(node, input_data, run_outputs)
+        elif node_type == 'model_config':
+            output_data = execute_model_config_node(node_data, input_data)
         else:
             logger.warning(f"Node {node.id} ({node_label}): Unknown node type '{node_type}'. Passing input through.")
             output_data = input_data # Pass data through for unknown types
@@ -96,6 +66,10 @@ def execute_node(node: Node, input_data: Any, workflow: Workflow, run_outputs: D
         elif output_data is None and node_type == 'model_config':
              # This case should ideally not happen based on above logic, but as fallback:
              output_data = {"status": "Configured", "message": "Model configuration node processed."} 
+
+        # Update node status
+        node_data['status'] = 'completed'
+        node_data['output'] = output_data
 
         return NodeExecutionResult(output=output_data)
 

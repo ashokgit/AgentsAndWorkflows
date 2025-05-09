@@ -821,16 +821,7 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                     testDataSending={testDataSending}
                     handleSendTestData={handleSendTestData}
                 />;
-            case 'input':
-            case 'default':
-                return <InputNodeForm
-                    node={node}
-                    formData={formData}
-                    nodes={nodes}
-                    edges={edges}
-                    commonTextFieldProps={commonTextFieldProps}
-                    NodeInputSelector={NodeInputSelector}
-                />;
+
             default:
                 return <GenericNodeForm
                     node={node}
