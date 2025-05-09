@@ -46,11 +46,7 @@ def execute_node(node: Node, input_data: Any, workflow: Workflow, run_outputs: D
     node_data = node.data
 
     try:
-        if node_type == 'input' or node_type == 'trigger':
-            output_data = input_data 
-            logger.info(f"Node {node.id} ({node_type}) passing data through.")
-        
-        elif node_type == 'webhook_trigger':
+        if node_type == 'webhook_trigger':
             # For a webhook trigger, the relevant data is typically the input_data provided
             # to this execution step (which might have come from the actual webhook callback
             # or from a test signal). We don't need to re-fetch from persistence here.
@@ -87,17 +83,8 @@ def execute_node(node: Node, input_data: Any, workflow: Workflow, run_outputs: D
                 output_data = {"error": f"Error executing code: {code_exec_e}", "original_input": input_data}
                 raise # Re-raise to mark node as failed
 
-        elif node_type == 'webhook_action':
-            output_data = execute_webhook_action_node(node, input_data, run_outputs)
-        
         elif node_type == 'api_consumer':
             output_data = execute_api_consumer_node(node, input_data, run_outputs)
-        
-        elif node_type == 'default':
-            # Default node logs the input and passes it through
-            logger.info(f"Default node {node.id} ({node_label}) received: {str(input_data)[:100]}...")
-            output_data = {"logged_input_summary": str(input_data)[:100]} # Log and pass summary
-        
         else:
             logger.warning(f"Node {node.id} ({node_label}): Unknown node type '{node_type}'. Passing input through.")
             output_data = input_data # Pass data through for unknown types
@@ -220,7 +207,7 @@ def execute_webhook_action_node(node: Node, input_data: Any, run_outputs: Dict[s
 
     if not url:
         logger.error(f"Webhook Action node {node.id}: URL is missing.")
-        raise ValueError("URL is required for webhook_action")
+        raise ValueError("URL is required for webhook")
     
     logger.info(f"Webhook Action {node.id}: Sending {method} request to {url}")
     try:

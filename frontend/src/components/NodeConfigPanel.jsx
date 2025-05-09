@@ -21,10 +21,8 @@ import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import LLMForm from './NodeConfigPanelForms/LLMForm';
 import ModelConfigForm from './NodeConfigPanelForms/ModelConfigForm';
 import CodeForm from './NodeConfigPanelForms/CodeForm';
-import WebhookActionForm from './NodeConfigPanelForms/WebhookActionForm';
 import ApiConsumerForm from './NodeConfigPanelForms/ApiConsumerForm';
 import WebhookTriggerForm from './NodeConfigPanelForms/WebhookTriggerForm';
-import InputNodeForm from './NodeConfigPanelForms/InputNodeForm';
 import GenericNodeForm from './NodeConfigPanelForms/GenericNodeForm';
 
 const modalStyle = {
@@ -494,17 +492,6 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
         setJsonValidity({ headers: true, body: true });
         // Clear errors when node changes
         setFieldErrors({});
-        // Initial validation check for webhook URL when panel opens
-        if (node.type === 'webhook_action' && !initialData.url) {
-            setFieldErrors(prev => ({ ...prev, url: 'Webhook URL is required.' }));
-        }
-        // Initial JSON validation
-        if (node.type === 'webhook_action') {
-            setJsonValidity({
-                headers: isValidJson(initialData.headers || '{}'),
-                body: isValidJson(initialData.body || '')
-            });
-        }
     }, [node]);
 
     const isValidJson = (str) => {
@@ -519,10 +506,6 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
 
     const validateField = (name, value) => {
         if (!node) return null;
-
-        if (name === 'url' && node.type === 'webhook_action' && !value) {
-            return 'Webhook URL is required.';
-        }
         // Only validate model for LLM node if no model_config_id is selected
         if (name === 'model' && ((node.type === 'llm' && !formData.model_config_id) || node.type === 'model_config') && !value) {
             return 'Model is required.';
@@ -806,18 +789,6 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                     nodes={nodes}
                     edges={edges}
                     commonTextFieldProps={commonTextFieldProps}
-                    NodeInputSelector={NodeInputSelector}
-                    DraggableTextField={DraggableTextField}
-                />;
-            case 'webhook_action':
-                return <WebhookActionForm
-                    node={node}
-                    formData={formData}
-                    nodes={nodes}
-                    edges={edges}
-                    commonTextFieldProps={commonTextFieldProps}
-                    fieldErrors={fieldErrors}
-                    jsonValidity={jsonValidity}
                     NodeInputSelector={NodeInputSelector}
                     DraggableTextField={DraggableTextField}
                 />;

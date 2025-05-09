@@ -78,11 +78,8 @@ import PublishOutlinedIcon from '@mui/icons-material/PublishOutlined'; // For Ex
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'; // For back button
 
 // Custom Node Components
-import DefaultNode from './nodes/DefaultNode';
-import InputNode from './nodes/InputNode';
 import LlmNode from './nodes/LlmNode';
 import CodeNode from './nodes/CodeNode';
-import WebhookNode from './nodes/WebhookNode';
 import WebhookInputNode from './nodes/WebhookInputNode';
 import ModelConfigNode from './nodes/ModelConfigNode';
 import ApiConsumerNode from './nodes/ApiConsumerNode';
@@ -98,11 +95,8 @@ const DEFAULT_LOG_PANEL_HEIGHT = 200;
 // Helper function to get icon based on node type (for palette)
 const getNodeIcon = (nodeType) => {
     switch (nodeType) {
-        case 'trigger': return <InputIcon />;
-        case 'defaultnode': return <NotesIcon />;
         case 'llm': return <SmartToyIcon />;
         case 'code': return <CodeIcon />;
-        case 'webhook_action': return <SendIcon />;
         case 'webhook_trigger': return <WebhookIcon />;
         case 'model_config': return <SettingsIcon />;
         case 'api_consumer': return <ApiIcon />;
@@ -113,16 +107,13 @@ const getNodeIcon = (nodeType) => {
 // Available node types for the palette
 const nodeTypesList = [
     // Input/Triggers group
-    { type: 'trigger', label: 'Input / Trigger', category: 'Inputs & Triggers' },
     { type: 'webhook_trigger', label: 'Webhook Trigger', category: 'Inputs & Triggers' },
 
     // Processing group
     { type: 'llm', label: 'LLM Call', category: 'Processing' },
     { type: 'code', label: 'Code Execution', category: 'Processing' },
-    { type: 'defaultnode', label: 'Default / Log', category: 'Processing' },
 
     // External Actions group
-    { type: 'webhook_action', label: 'Webhook Action', category: 'External Actions' },
     { type: 'api_consumer', label: 'API Consumer', category: 'External Actions' },
 
     // Configuration group
@@ -143,11 +134,8 @@ const getNodesByCategory = () => {
 
 // Mapping for React Flow with enhanced props
 const getNodeTypes = (updateNodeData) => ({
-    defaultnode: (props) => <DefaultNode {...props} />,
-    trigger: (props) => <InputNode {...props} />,
     llm: (props) => <LlmNode {...props} />,
     code: (props) => <CodeNode {...props} />,
-    webhook_action: (props) => <WebhookNode {...props} />,
     webhook_trigger: (props) => <WebhookInputNode {...props} updateNodeData={updateNodeData} />,
     model_config: (props) => <ModelConfigNode {...props} />,
     api_consumer: (props) => <ApiConsumerNode {...props} />,
