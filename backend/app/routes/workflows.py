@@ -1,13 +1,15 @@
-from fastapi import APIRouter, HTTPException, Request, Body
-from typing import Dict, List, Any, Optional
+from fastapi import APIRouter, HTTPException, Request, Body, Query
+from typing import Dict, List, Any, Optional, Union
 from sse_starlette.sse import EventSourceResponse
 from datetime import datetime
 import logging
 import traceback
+import os
+import json
 
 from app.models.workflow import Workflow
 from app.services.workflow_service import run_workflow, log_stream_generator, test_workflow
-from app.utils.persistence import workflows_db, workflow_runs, save_workflows_to_disk
+from app.utils.persistence import workflows_db, workflow_runs, save_workflows_to_disk, get_run_logs, runs_dir
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 logger = logging.getLogger(__name__)
@@ -139,9 +141,50 @@ async def stream_logs(request: Request, workflow_id: str, run_id: str):
     return EventSourceResponse(log_stream_generator(run_id, request))
 
 @router.get("/{workflow_id}/runs")
-async def get_workflow_runs(workflow_id: str):
-    """Get all runs for a workflow"""
+async def get_workflow_runs(
+    workflow_id: str, 
+    limit: int = Query(50, description="Maximum number of logs to return"),
+    include_archived: bool = Query(True, description="Whether to include archived logs")
+):
+    """Get all runs for a workflow with pagination and filtering"""
     if workflow_id not in workflows_db:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    runs = workflow_runs.get(workflow_id, [])
+    
+    # Use the new function to retrieve logs with metadata
+    runs = get_run_logs(workflow_id, limit, include_archived)
     return runs 
+
+@router.get("/{workflow_id}/runs/{run_id}")
+async def get_workflow_run_by_id(workflow_id: str, run_id: str):
+    """Get a specific run by ID"""
+    if workflow_id not in workflows_db:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    
+    # First check in-memory runs
+    for run_log in workflow_runs.get(workflow_id, []):
+        # Find the run with matching run_id
+        if run_log and len(run_log) > 0 and run_log[0].get('run_id') == run_id:
+            return {
+                "run_id": run_id,
+                "workflow_id": workflow_id,
+                "logs": run_log
+            }
+    
+    # If not found in memory, check in archived files
+    workflow_run_dir = os.path.join(runs_dir, workflow_id)
+    if not os.path.exists(workflow_run_dir):
+        raise HTTPException(status_code=404, detail="Run not found")
+        
+    # Search through archived run files
+    run_files = os.listdir(workflow_run_dir)
+    for run_file in run_files:
+        if run_id in run_file:  # Quick check before loading file
+            try:
+                with open(os.path.join(workflow_run_dir, run_file), 'r') as f:
+                    run_data = json.load(f)
+                    if run_data.get('metadata', {}).get('run_id') == run_id:
+                        return run_data  # Return the full data with metadata and logs
+            except Exception as e:
+                logger.error(f"Error loading archived run log {run_file}: {e}")
+    
+    raise HTTPException(status_code=404, detail="Run not found") 

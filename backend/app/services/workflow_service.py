@@ -10,7 +10,7 @@ from datetime import datetime
 
 from app.models.workflow import Workflow, Node
 from app.services.node_execution import execute_node
-from app.utils.persistence import workflows_db, workflow_runs, save_workflows_to_disk
+from app.utils.persistence import workflows_db, workflow_runs, save_workflows_to_disk, save_individual_run_log
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -490,9 +490,14 @@ async def execute_workflow_logic(workflow: Workflow, run_id: str, log_queue: asy
     try:
         if workflow_id not in workflow_runs: workflow_runs[workflow_id] = []
         workflow_runs[workflow_id].insert(0, final_run_log)
-        max_runs_to_keep = 10 
+        max_runs_to_keep = 20  # Increased from 10 to 20 for in-memory storage
         if len(workflow_runs[workflow_id]) > max_runs_to_keep: workflow_runs[workflow_id] = workflow_runs[workflow_id][:max_runs_to_keep]
-        save_workflows_to_disk() # Also saves runs
+        
+        # Save to disk in two ways: main runs file and individual archive file
+        save_workflows_to_disk() # Save main runs file
+        
+        # Also save individual run log with metadata for better archiving
+        save_individual_run_log(workflow_id, run_id, final_run_log)
         
         logger.info(f"[Run {run_id} Finally]: Sending __END__ event to SSE queue.")
         await log_queue.put(json.dumps({"step": "__END__", "run_id": run_id, "is_test_log": is_test, "timestamp": time.time()}))
