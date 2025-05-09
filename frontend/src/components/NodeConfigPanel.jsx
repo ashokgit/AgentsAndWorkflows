@@ -2,21 +2,13 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
-import Select from '@mui/material/Select';
-import MenuItem from '@mui/material/MenuItem';
-import FormControl from '@mui/material/FormControl';
-import InputLabel from '@mui/material/InputLabel';
 import IconButton from '@mui/material/IconButton';
 import CloseIcon from '@mui/icons-material/Close';
 import Divider from '@mui/material/Divider';
-import FormHelperText from '@mui/material/FormHelperText';
 import Modal from '@mui/material/Modal';
 import Paper from '@mui/material/Paper';
 import Button from '@mui/material/Button';
-import CircularProgress from '@mui/material/CircularProgress';
-import Alert from '@mui/material/Alert';
 import axios from 'axios';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
@@ -26,11 +18,14 @@ import Collapse from '@mui/material/Collapse';
 import Tooltip from '@mui/material/Tooltip';
 import LinkIcon from '@mui/icons-material/Link';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import LaunchIcon from '@mui/icons-material/Launch';
-import Chip from '@mui/material/Chip';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import SendIcon from '@mui/icons-material/Send';
+import LLMForm from './NodeConfigPanelForms/LLMForm';
+import ModelConfigForm from './NodeConfigPanelForms/ModelConfigForm';
+import CodeForm from './NodeConfigPanelForms/CodeForm';
+import WebhookActionForm from './NodeConfigPanelForms/WebhookActionForm';
+import ApiConsumerForm from './NodeConfigPanelForms/ApiConsumerForm';
+import WebhookTriggerForm from './NodeConfigPanelForms/WebhookTriggerForm';
+import InputNodeForm from './NodeConfigPanelForms/InputNodeForm';
+import GenericNodeForm from './NodeConfigPanelForms/GenericNodeForm';
 
 const modalStyle = {
     position: 'absolute',
@@ -783,1113 +778,97 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
 
         switch (node.type) {
             case 'llm':
-                // Get all model configurations from nodes
-                const modelConfigs = nodes?.filter(n => n.type === 'model_config').map(n => ({
-                    id: n.id,
-                    name: n.data?.config_name || 'Unnamed Config',
-                    model: n.data?.model
-                })) || [];
-
-                // Add validation warning if no model_config_id is selected and no model is specified
-                const hasNoModel = !formData.model && !formData.model_config_id;
-                const showModelWarning = hasNoModel && modelConfigs.length > 0;
-
-                return (
-                    <>
-                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
-
-                        <TextField
-                            label="Name"
-                            name="node_name"
-                            value={formData.node_name || ''}
-                            placeholder="Give this LLM node a descriptive name"
-                            {...commonTextFieldProps}
-                        />
-
-                        <DraggableTextField
-                            label="Prompt"
-                            name="prompt"
-                            multiline
-                            rows={4}
-                            value={formData.prompt || ''}
-                            {...commonTextFieldProps}
-                        />
-
-                        {modelConfigs.length > 0 && (
-                            <FormControl fullWidth margin="normal" size="small">
-                                <InputLabel id="model-config-select-label">Use Model Configuration</InputLabel>
-                                <Select
-                                    labelId="model-config-select-label"
-                                    name="model_config_id"
-                                    value={formData.model_config_id || ''}
-                                    label="Use Model Configuration"
-                                    onChange={handleChange}
-                                    onBlur={handleBlur}
-                                    error={showModelWarning}
-                                >
-                                    <MenuItem value="">
-                                        <em>Configure manually</em>
-                                    </MenuItem>
-                                    {modelConfigs.map(config => (
-                                        <MenuItem key={config.id} value={config.id}>
-                                            {config.name} ({config.model})
-                                        </MenuItem>
-                                    ))}
-                                </Select>
-                                <FormHelperText error={showModelWarning}>
-                                    {showModelWarning
-                                        ? "LLM nodes should use a model configuration or specify a model"
-                                        : formData.model_config_id
-                                            ? "Using shared model configuration"
-                                            : "Or configure model manually below"}
-                                </FormHelperText>
-                            </FormControl>
-                        )}
-
-                        {!formData.model_config_id && (
-                            <>
-                                <TextField
-                                    label="Model"
-                                    name="model"
-                                    required
-                                    value={formData.model || ''}
-                                    error={!!fieldErrors.model || showModelWarning}
-                                    helperText={fieldErrors.model || (showModelWarning ? "Model is required" : "")}
-                                    placeholder='e.g., gpt-4o, claude-3-sonnet-20240229'
-                                    {...commonTextFieldProps}
-                                />
-                                <TextField
-                                    label="API Key"
-                                    name="api_key"
-                                    type="password"
-                                    value={formData.api_key || ''}
-                                    placeholder="Uses environment variable if blank"
-                                    {...commonTextFieldProps}
-                                />
-                                <TextField
-                                    label="API Base URL (Optional)"
-                                    name="api_base"
-                                    type="url"
-                                    value={formData.api_base || ''}
-                                    placeholder="e.g., http://localhost:11434/v1"
-                                    {...commonTextFieldProps}
-                                />
-                            </>
-                        )}
-
-                        <Box sx={{ mt: 3, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <Button
-                                variant="contained"
-                                color="primary"
-                                onClick={handleTestLLM}
-                                disabled={testState.loading || (!formData.model && !formData.model_config_id)}
-                                startIcon={testState.loading ? <CircularProgress size={20} /> : null}
-                            >
-                                {testState.loading ? 'Testing...' : 'Test LLM Node'}
-                            </Button>
-
-                            {testState.result && (
-                                <Alert severity="success" sx={{ mt: 2 }}>
-                                    <Typography variant="subtitle2">Test Successful!</Typography>
-                                    <Typography variant="body2">
-                                        Response: {testState.result.response.substring(0, 100)}
-                                        {testState.result.response.length > 100 ? '...' : ''}
-                                    </Typography>
-                                    {testState.result.usage && (
-                                        <Typography variant="caption" display="block">
-                                            Tokens: {testState.result.usage.total_tokens || 'N/A'}
-                                        </Typography>
-                                    )}
-                                </Alert>
-                            )}
-
-                            {testState.error && (
-                                <Alert severity="error" sx={{ mt: 2 }}>
-                                    <Typography variant="subtitle2">Test Failed</Typography>
-                                    <Typography variant="body2">{testState.error}</Typography>
-                                </Alert>
-                            )}
-                        </Box>
-                    </>
-                );
+                return <LLMForm
+                    node={node}
+                    formData={formData}
+                    nodes={nodes}
+                    edges={edges}
+                    commonTextFieldProps={commonTextFieldProps}
+                    fieldErrors={fieldErrors}
+                    testState={testState}
+                    handleTestLLM={handleTestLLM}
+                    NodeInputSelector={NodeInputSelector}
+                    DraggableTextField={DraggableTextField}
+                />;
             case 'model_config':
-                return (
-                    <>
-                        <Typography variant="subtitle2" sx={{ mb: 2 }}>
-                            Configure a model that can be used across multiple LLM nodes
-                        </Typography>
-                        <TextField
-                            label="Configuration Name"
-                            name="config_name"
-                            required
-                            value={formData.config_name || ''}
-                            error={!!fieldErrors.config_name}
-                            helperText={fieldErrors.config_name || "Give this configuration a name to reference it"}
-                            placeholder="e.g., GPT-4, Claude-3-Sonnet"
-                            {...commonTextFieldProps}
-                        />
-                        <TextField
-                            label="Model"
-                            name="model"
-                            required
-                            value={formData.model || ''}
-                            error={!!fieldErrors.model}
-                            helperText={fieldErrors.model}
-                            placeholder='e.g., gpt-4o, claude-3-sonnet-20240229'
-                            {...commonTextFieldProps}
-                        />
-                        <TextField
-                            label="API Key"
-                            name="api_key"
-                            type="password"
-                            value={formData.api_key || ''}
-                            placeholder="Uses environment variable if blank"
-                            {...commonTextFieldProps}
-                        />
-                        <TextField
-                            label="API Base URL (Optional)"
-                            name="api_base"
-                            type="url"
-                            value={formData.api_base || ''}
-                            placeholder="e.g., http://localhost:11434/v1"
-                            {...commonTextFieldProps}
-                        />
-
-                        <Box sx={{ mt: 3, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <Button
-                                variant="contained"
-                                color="primary"
-                                onClick={handleTestModelConfig}
-                                disabled={testState.loading || !formData.model}
-                                startIcon={testState.loading ? <CircularProgress size={20} /> : null}
-                            >
-                                {testState.loading ? 'Testing...' : 'Test Configuration'}
-                            </Button>
-
-                            {testState.result && (
-                                <Alert severity="success" sx={{ mt: 2 }}>
-                                    <Typography variant="subtitle2">Test Successful!</Typography>
-                                    <Typography variant="body2">
-                                        Response: {testState.result.response.substring(0, 100)}
-                                        {testState.result.response.length > 100 ? '...' : ''}
-                                    </Typography>
-                                    {testState.result.usage && (
-                                        <Typography variant="caption" display="block">
-                                            Tokens: {testState.result.usage.total_tokens || 'N/A'}
-                                        </Typography>
-                                    )}
-                                </Alert>
-                            )}
-
-                            {testState.error && (
-                                <Alert severity="error" sx={{ mt: 2 }}>
-                                    <Typography variant="subtitle2">Test Failed</Typography>
-                                    <Typography variant="body2">{testState.error}</Typography>
-                                </Alert>
-                            )}
-                        </Box>
-                    </>
-                );
+                return <ModelConfigForm
+                    node={node}
+                    formData={formData}
+                    commonTextFieldProps={commonTextFieldProps}
+                    fieldErrors={fieldErrors}
+                    testState={testState}
+                    handleTestModelConfig={handleTestModelConfig}
+                />;
             case 'code':
-                return (
-                    <>
-                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
-
-                        <TextField
-                            label="Name"
-                            name="node_name"
-                            value={formData.node_name || ''}
-                            placeholder="Give this code node a descriptive name"
-                            {...commonTextFieldProps}
-                        />
-
-                        <DraggableTextField
-                            label="Python Code"
-                            name="code"
-                            multiline
-                            rows={10}
-                            value={formData.code || ''}
-                            placeholder={'def execute(input_data):\n    # Access input with input_data["key"]\n    return {"processed_value": ...}'}
-                            InputProps={{ sx: { fontFamily: 'monospace' } }}
-                            {...commonTextFieldProps}
-                        />
-                        <FormHelperText sx={{ ml: '10px' }}>Input available as `input_data` dict. Drag node outputs to use them.</FormHelperText>
-                    </>
-                );
+                return <CodeForm
+                    node={node}
+                    formData={formData}
+                    nodes={nodes}
+                    edges={edges}
+                    commonTextFieldProps={commonTextFieldProps}
+                    NodeInputSelector={NodeInputSelector}
+                    DraggableTextField={DraggableTextField}
+                />;
             case 'webhook_action':
-                return (
-                    <>
-                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
-
-                        <TextField
-                            label="Name"
-                            name="node_name"
-                            value={formData.node_name || ''}
-                            placeholder="Give this webhook a descriptive name"
-                            {...commonTextFieldProps}
-                        />
-
-                        <TextField
-                            label="Webhook URL"
-                            name="url"
-                            type="url"
-                            required
-                            value={formData.url || ''}
-                            error={!!fieldErrors.url}
-                            helperText={fieldErrors.url}
-                            {...commonTextFieldProps}
-                        />
-                        <FormControl fullWidth margin="normal" size="small">
-                            <InputLabel id="method-select-label">HTTP Method</InputLabel>
-                            <Select
-                                labelId="method-select-label"
-                                label="HTTP Method"
-                                name="method"
-                                value={formData.method || 'POST'}
-                                onChange={handleChange}
-                                onBlur={handleBlur}
-                            >
-                                <MenuItem value="POST">POST</MenuItem>
-                                <MenuItem value="GET">GET</MenuItem>
-                                <MenuItem value="PUT">PUT</MenuItem>
-                                <MenuItem value="DELETE">DELETE</MenuItem>
-                                <MenuItem value="PATCH">PATCH</MenuItem>
-                            </Select>
-                        </FormControl>
-                        <DraggableTextField
-                            label="Headers (JSON)"
-                            name="headers"
-                            multiline
-                            rows={4}
-                            value={formData.headers || '{}'}
-                            error={!jsonValidity.headers || !!fieldErrors.headers}
-                            helperText={!jsonValidity.headers ? 'Invalid JSON' : fieldErrors.headers}
-                            InputProps={{ sx: { fontFamily: 'monospace' } }}
-                            {...commonTextFieldProps}
-                        />
-                        <DraggableTextField
-                            label="Body (JSON)"
-                            name="body"
-                            multiline
-                            rows={6}
-                            value={formData.body || ''}
-                            error={!jsonValidity.body || !!fieldErrors.body}
-                            helperText={!jsonValidity.body ? 'Invalid JSON' : fieldErrors.body || 'Defaults to node input if blank. Drag node outputs to create a custom body.'}
-                            placeholder={'{ "key": "value" } '}
-                            InputProps={{ sx: { fontFamily: 'monospace' } }}
-                            {...commonTextFieldProps}
-                        />
-                    </>
-                );
+                return <WebhookActionForm
+                    node={node}
+                    formData={formData}
+                    nodes={nodes}
+                    edges={edges}
+                    commonTextFieldProps={commonTextFieldProps}
+                    fieldErrors={fieldErrors}
+                    jsonValidity={jsonValidity}
+                    NodeInputSelector={NodeInputSelector}
+                    DraggableTextField={DraggableTextField}
+                />;
             case 'api_consumer':
-                return (
-                    <>
-                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
-
-                        <TextField
-                            label="Name"
-                            name="node_name"
-                            value={formData.node_name || ''}
-                            placeholder="Give this API consumer a descriptive name"
-                            {...commonTextFieldProps}
-                        />
-
-                        <TextField
-                            label="API Endpoint URL"
-                            name="url"
-                            type="url"
-                            required
-                            value={formData.url || ''}
-                            error={!!fieldErrors.url}
-                            helperText={fieldErrors.url}
-                            {...commonTextFieldProps}
-                        />
-
-                        <FormControl fullWidth margin="normal" size="small">
-                            <InputLabel id="method-select-label">HTTP Method</InputLabel>
-                            <Select
-                                labelId="method-select-label"
-                                label="HTTP Method"
-                                name="method"
-                                value={formData.method || 'GET'}
-                                onChange={handleChange}
-                                onBlur={handleBlur}
-                            >
-                                <MenuItem value="GET">GET</MenuItem>
-                                <MenuItem value="POST">POST</MenuItem>
-                                <MenuItem value="PUT">PUT</MenuItem>
-                                <MenuItem value="DELETE">DELETE</MenuItem>
-                                <MenuItem value="PATCH">PATCH</MenuItem>
-                            </Select>
-                        </FormControl>
-
-                        <FormControl fullWidth margin="normal" size="small">
-                            <InputLabel id="auth-type-select-label">Authentication Type</InputLabel>
-                            <Select
-                                labelId="auth-type-select-label"
-                                label="Authentication Type"
-                                name="auth_type"
-                                value={formData.auth_type || 'none'}
-                                onChange={handleChange}
-                                onBlur={handleBlur}
-                            >
-                                <MenuItem value="none">None</MenuItem>
-                                <MenuItem value="api_key">API Key</MenuItem>
-                                <MenuItem value="bearer">Bearer Token</MenuItem>
-                                <MenuItem value="basic">Basic Auth</MenuItem>
-                                <MenuItem value="oauth2">OAuth 2.0</MenuItem>
-                                <MenuItem value="custom">Custom</MenuItem>
-                            </Select>
-                        </FormControl>
-
-                        {formData.auth_type === 'api_key' && (
-                            <>
-                                <TextField
-                                    label="API Key Name"
-                                    name="api_key_name"
-                                    value={formData.api_key_name || ''}
-                                    placeholder="X-API-Key"
-                                    {...commonTextFieldProps}
-                                />
-                                <TextField
-                                    label="API Key Value"
-                                    name="api_key_value"
-                                    type="password"
-                                    value={formData.api_key_value || ''}
-                                    placeholder="your-api-key-here"
-                                    {...commonTextFieldProps}
-                                />
-                                <FormControl fullWidth margin="normal" size="small">
-                                    <InputLabel id="api-key-location-label">API Key Location</InputLabel>
-                                    <Select
-                                        labelId="api-key-location-label"
-                                        label="API Key Location"
-                                        name="api_key_location"
-                                        value={formData.api_key_location || 'header'}
-                                        onChange={handleChange}
-                                        onBlur={handleBlur}
-                                    >
-                                        <MenuItem value="header">Header</MenuItem>
-                                        <MenuItem value="query">Query Parameter</MenuItem>
-                                    </Select>
-                                </FormControl>
-                            </>
-                        )}
-
-                        {formData.auth_type === 'bearer' && (
-                            <TextField
-                                label="Bearer Token"
-                                name="bearer_token"
-                                type="password"
-                                value={formData.bearer_token || ''}
-                                placeholder="your-bearer-token-here"
-                                {...commonTextFieldProps}
-                            />
-                        )}
-
-                        {formData.auth_type === 'basic' && (
-                            <>
-                                <TextField
-                                    label="Username"
-                                    name="basic_username"
-                                    value={formData.basic_username || ''}
-                                    {...commonTextFieldProps}
-                                />
-                                <TextField
-                                    label="Password"
-                                    name="basic_password"
-                                    type="password"
-                                    value={formData.basic_password || ''}
-                                    {...commonTextFieldProps}
-                                />
-                            </>
-                        )}
-
-                        {formData.auth_type === 'oauth2' && (
-                            <>
-                                <TextField
-                                    label="Token URL"
-                                    name="oauth_token_url"
-                                    type="url"
-                                    value={formData.oauth_token_url || ''}
-                                    placeholder="https://example.com/oauth/token"
-                                    {...commonTextFieldProps}
-                                />
-                                <TextField
-                                    label="Client ID"
-                                    name="oauth_client_id"
-                                    value={formData.oauth_client_id || ''}
-                                    {...commonTextFieldProps}
-                                />
-                                <TextField
-                                    label="Client Secret"
-                                    name="oauth_client_secret"
-                                    type="password"
-                                    value={formData.oauth_client_secret || ''}
-                                    {...commonTextFieldProps}
-                                />
-                                <TextField
-                                    label="Scope"
-                                    name="oauth_scope"
-                                    value={formData.oauth_scope || ''}
-                                    placeholder="read write"
-                                    {...commonTextFieldProps}
-                                />
-                            </>
-                        )}
-
-                        <DraggableTextField
-                            label="Query Parameters (JSON)"
-                            name="query_params"
-                            multiline
-                            rows={3}
-                            value={formData.query_params || '{}'}
-                            error={!isValidJson(formData.query_params || '{}') || !!fieldErrors.query_params}
-                            helperText={!isValidJson(formData.query_params || '{}') ? 'Invalid JSON' : fieldErrors.query_params || 'Parameters to add to the URL query string'}
-                            InputProps={{ sx: { fontFamily: 'monospace' } }}
-                            {...commonTextFieldProps}
-                        />
-
-                        <DraggableTextField
-                            label="Headers (JSON)"
-                            name="headers"
-                            multiline
-                            rows={3}
-                            value={formData.headers || '{}'}
-                            error={!jsonValidity.headers || !!fieldErrors.headers}
-                            helperText={!jsonValidity.headers ? 'Invalid JSON' : fieldErrors.headers}
-                            InputProps={{ sx: { fontFamily: 'monospace' } }}
-                            {...commonTextFieldProps}
-                        />
-
-                        <DraggableTextField
-                            label="Body (JSON)"
-                            name="body"
-                            multiline
-                            rows={6}
-                            value={formData.body || ''}
-                            error={!jsonValidity.body || !!fieldErrors.body}
-                            helperText={!jsonValidity.body ? 'Invalid JSON' : fieldErrors.body || 'Defaults to node input if blank. Drag node outputs to create a custom body.'}
-                            placeholder={'{ "key": "value" } '}
-                            InputProps={{ sx: { fontFamily: 'monospace' } }}
-                            {...commonTextFieldProps}
-                        />
-
-                        <FormControl fullWidth margin="normal" size="small">
-                            <InputLabel id="response-handling-label">Response Handling</InputLabel>
-                            <Select
-                                labelId="response-handling-label"
-                                label="Response Handling"
-                                name="response_handling"
-                                value={formData.response_handling || 'json'}
-                                onChange={handleChange}
-                                onBlur={handleBlur}
-                            >
-                                <MenuItem value="json">Parse as JSON</MenuItem>
-                                <MenuItem value="text">Raw Text</MenuItem>
-                                <MenuItem value="binary">Binary Data</MenuItem>
-                            </Select>
-                            <FormHelperText>How to process the API response</FormHelperText>
-                        </FormControl>
-
-                        <TextField
-                            label="Timeout (ms)"
-                            name="timeout"
-                            type="number"
-                            value={formData.timeout || '30000'}
-                            placeholder="30000"
-                            helperText="Maximum time to wait for response (milliseconds)"
-                            {...commonTextFieldProps}
-                        />
-
-                        <FormControl fullWidth margin="normal" size="small">
-                            <InputLabel id="retry-policy-label">Retry Policy</InputLabel>
-                            <Select
-                                labelId="retry-policy-label"
-                                label="Retry Policy"
-                                name="retry_policy"
-                                value={formData.retry_policy || 'none'}
-                                onChange={handleChange}
-                                onBlur={handleBlur}
-                            >
-                                <MenuItem value="none">No Retries</MenuItem>
-                                <MenuItem value="simple">Simple (3 retries)</MenuItem>
-                                <MenuItem value="exponential">Exponential Backoff</MenuItem>
-                            </Select>
-                            <FormHelperText>How to handle request failures</FormHelperText>
-                        </FormControl>
-
-                        <Button
-                            variant="contained"
-                            color="primary"
-                            sx={{ mt: 2 }}
-                            onClick={async () => {
-                                try {
-                                    // Reset previous test results
-                                    setApiTestState({
-                                        loading: true,
-                                        result: null,
-                                        error: null
-                                    });
-
-                                    // Validate URL
-                                    if (!formData.url) {
-                                        setFieldErrors(prev => ({ ...prev, url: 'API URL is required for testing.' }));
-                                        setApiTestState({
-                                            loading: false,
-                                            result: null,
-                                            error: 'API URL is required'
-                                        });
-                                        return;
-                                    }
-
-                                    // Collect API config data from form
-                                    const apiConfig = {
-                                        url: formData.url,
-                                        method: formData.method || 'GET',
-                                        headers: formData.headers || '{}',
-                                        body: formData.body || '',
-                                        query_params: formData.query_params || '{}',
-                                        auth_type: formData.auth_type || 'none',
-                                        timeout: formData.timeout || 30000,
-                                        response_handling: formData.response_handling || 'json'
-                                    };
-
-                                    // Add auth details based on the selected auth type
-                                    if (formData.auth_type === 'api_key') {
-                                        apiConfig.api_key_name = formData.api_key_name;
-                                        apiConfig.api_key_value = formData.api_key_value;
-                                        apiConfig.api_key_location = formData.api_key_location || 'header';
-                                    } else if (formData.auth_type === 'bearer') {
-                                        apiConfig.bearer_token = formData.bearer_token;
-                                    } else if (formData.auth_type === 'basic') {
-                                        apiConfig.basic_username = formData.basic_username;
-                                        apiConfig.basic_password = formData.basic_password;
-                                    } else if (formData.auth_type === 'oauth2') {
-                                        apiConfig.oauth_token_url = formData.oauth_token_url;
-                                        apiConfig.oauth_client_id = formData.oauth_client_id;
-                                        apiConfig.oauth_client_secret = formData.oauth_client_secret;
-                                        apiConfig.oauth_scope = formData.oauth_scope;
-                                    }
-
-                                    // Send the test request
-                                    const response = await axios.post('/api/api_consumer/test', apiConfig);
-
-                                    // Update state with the result
-                                    if (response.data) {
-                                        setApiTestState({
-                                            loading: false,
-                                            result: response.data,
-                                            error: null
-                                        });
-
-                                        // Update the node with testSuccess flag
-                                        onUpdate(node.id, {
-                                            testSuccess: true,
-                                            // Add a timestamp for last successful test
-                                            lastTestedAt: new Date().toISOString()
-                                        });
-                                    } else {
-                                        throw new Error('No response data returned');
-                                    }
-                                } catch (error) {
-                                    console.error("API test error:", error);
-                                    setApiTestState({
-                                        loading: false,
-                                        result: null,
-                                        error: error.response?.data?.detail || error.message
-                                    });
-
-                                    // Clear testSuccess flag if it exists
-                                    if (formData.testSuccess) {
-                                        onUpdate(node.id, { testSuccess: false });
-                                    }
-                                }
-                            }}
-                            disabled={apiTestState.loading}
-                            startIcon={apiTestState.loading ? <CircularProgress size={20} /> : null}
-                        >
-                            {apiTestState.loading ? 'Testing...' : 'Test API Connection'}
-                        </Button>
-
-                        {apiTestState.result && (
-                            <Alert severity="success" sx={{ mt: 2 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <Typography variant="subtitle2">
-                                        API Test Successful!
-                                        <span style={{
-                                            backgroundColor: '#4caf50',
-                                            color: 'white',
-                                            padding: '2px 8px',
-                                            borderRadius: '10px',
-                                            fontSize: '0.75rem',
-                                            marginLeft: '8px'
-                                        }}>
-                                            Verified
-                                        </span>
-                                    </Typography>
-                                    <Typography variant="caption" color="textSecondary">
-                                        {formData.lastTestedAt ? `Last tested: ${new Date(formData.lastTestedAt).toLocaleString()}` : ''}
-                                    </Typography>
-                                </Box>
-                                <Typography variant="body2">
-                                    Status: {apiTestState.result.status_code}
-                                </Typography>
-                                <Box sx={{ mt: 1, p: 1, maxHeight: '150px', overflow: 'auto', bgcolor: 'background.paper', borderRadius: 1, fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                                    <pre style={{ margin: 0 }}>
-                                        {typeof apiTestState.result.response === 'object'
-                                            ? JSON.stringify(apiTestState.result.response, null, 2)
-                                            : apiTestState.result.response}
-                                    </pre>
-                                </Box>
-                            </Alert>
-                        )}
-
-                        {apiTestState.error && (
-                            <Alert severity="error" sx={{ mt: 2 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                    <Typography variant="subtitle2">
-                                        API Test Failed
-                                        <span style={{
-                                            backgroundColor: '#f44336',
-                                            color: 'white',
-                                            padding: '2px 8px',
-                                            borderRadius: '10px',
-                                            fontSize: '0.75rem',
-                                            marginLeft: '8px'
-                                        }}>
-                                            Error
-                                        </span>
-                                    </Typography>
-                                </Box>
-                                <Typography variant="body2">{apiTestState.error}</Typography>
-                            </Alert>
-                        )}
-                    </>
-                );
+                return <ApiConsumerForm
+                    node={node}
+                    formData={formData}
+                    nodes={nodes}
+                    edges={edges}
+                    commonTextFieldProps={commonTextFieldProps}
+                    fieldErrors={fieldErrors}
+                    setFieldErrors={setFieldErrors}
+                    jsonValidity={jsonValidity}
+                    apiTestState={apiTestState}
+                    setApiTestState={setApiTestState}
+                    NodeInputSelector={NodeInputSelector}
+                    DraggableTextField={DraggableTextField}
+                    isValidJson={isValidJson}
+                    onUpdate={onUpdate}
+                />;
             case 'webhook_trigger':
-                const webhookId = formData.webhook_id || 'Generating...';
-                const hasWebhookData = !!formData.last_payload;
-                const needsWorkflowSave = !formData.webhook_id && !workflowId;
-
-                return (
-                    <>
-                        <TextField
-                            label="Webhook Name"
-                            name="webhook_name"
-                            value={formData.webhook_name || ''}
-                            placeholder="Give this webhook a descriptive name"
-                            {...commonTextFieldProps}
-                            sx={{ mb: 2 }}
-                        />
-
-                        <Box sx={{ mb: 3, p: 2, backgroundColor: '#f5f5f5', borderRadius: 1 }}>
-                            <Typography variant="subtitle2" gutterBottom>
-                                Webhook URL {formData.webhook_id &&
-                                    <span style={{
-                                        backgroundColor: '#4caf50',
-                                        color: 'white',
-                                        padding: '2px 8px',
-                                        borderRadius: '10px',
-                                        fontSize: '0.75rem',
-                                        marginLeft: '8px'
-                                    }}>
-                                        Ready
-                                    </span>
-                                }
-                                {needsWorkflowSave &&
-                                    <span style={{
-                                        backgroundColor: '#f44336',
-                                        color: 'white',
-                                        padding: '2px 8px',
-                                        borderRadius: '10px',
-                                        fontSize: '0.75rem',
-                                        marginLeft: '8px'
-                                    }}>
-                                        Save Required
-                                    </span>
-                                }
-                                {waitingForWebhookData &&
-                                    <span style={{
-                                        backgroundColor: '#ff9800',
-                                        color: 'white',
-                                        padding: '2px 8px',
-                                        borderRadius: '10px',
-                                        fontSize: '0.75rem',
-                                        marginLeft: '8px',
-                                        animation: 'pulse 1.5s infinite',
-                                        '@keyframes pulse': {
-                                            '0%': { opacity: 0.8 },
-                                            '50%': { opacity: 1 },
-                                            '100%': { opacity: 0.8 },
-                                        }
-                                    }}>
-                                        Waiting For Data
-                                    </span>
-                                }
-                            </Typography>
-                            <Typography
-                                sx={{
-                                    p: 1,
-                                    backgroundColor: 'background.paper',
-                                    borderRadius: 1,
-                                    fontFamily: 'monospace',
-                                    wordBreak: 'break-all',
-                                    border: formData.webhook_id ? '1px solid #e0e0e0' : '1px dashed #f44336'
-                                }}
-                            >
-                                {formData.webhook_id ?
-                                    `${window.location.origin}${webhookId.startsWith('/') ? '' : '/'}${webhookId}` :
-                                    'Save your workflow first to generate a webhook URL'
-                                }
-                            </Typography>
-                            {formData.webhook_id && (
-                                <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                                    <Button
-                                        size="small"
-                                        variant="outlined"
-                                        onClick={() => navigator.clipboard.writeText(
-                                            `${window.location.origin}${webhookId.startsWith('/') ? '' : '/'}${webhookId}`
-                                        )}
-                                    >
-                                        Copy URL
-                                    </Button>
-                                    <Button
-                                        size="small"
-                                        variant="outlined"
-                                        color="info"
-                                        onClick={() => window.open(
-                                            `${window.location.origin}${webhookId.startsWith('/') ? '' : '/'}${webhookId}`, '_blank'
-                                        )}
-                                    >
-                                        Open in New Tab
-                                    </Button>
-                                    <Button
-                                        size="small"
-                                        variant="outlined"
-                                        color="success"
-                                        onClick={() => {
-                                            // Ensure the webhook path is correct (should be /api/webhooks/...)
-                                            let webhookPath = '';
-                                            if (webhookId.includes('/api/webhooks/')) {
-                                                // Path is already correct
-                                                webhookPath = webhookId;
-                                            } else if (webhookId.startsWith('/')) {
-                                                // Path is missing the /api/webhooks/ prefix
-                                                webhookPath = `/api/webhooks/wh_${workflowId}_${node.id}`;
-                                            } else {
-                                                // UUID only case
-                                                webhookPath = `/api/webhooks/wh_${workflowId}_${node.id}`;
-                                            }
-
-                                            // Build the curl command on a single line with no line breaks
-                                            const curlCommand = `curl -X POST ${window.location.origin}${webhookPath} -H "Content-Type: application/json" -d '{"event":"test.event","data":{"user_id":"12345","email":"test@example.com","name":"Test User"},"timestamp":"${new Date().toISOString()}"}'`;
-                                            navigator.clipboard.writeText(curlCommand);
-                                            alert("Curl command copied to clipboard. Paste it in your terminal to test the webhook.");
-                                        }}
-                                    >
-                                        Copy Test Command
-                                    </Button>
-                                </Box>
-                            )}
-                        </Box>
-
-                        {/* Test Status Panel - Only shown when waiting for webhook data during a test */}
-                        {waitingForWebhookData && (
-                            <Box sx={{
-                                mb: 3,
-                                p: 2,
-                                borderRadius: 1,
-                                border: '2px solid #ff9800',
-                                backgroundColor: 'rgba(255, 152, 0, 0.1)',
-                                animation: 'pulseBorder 2s infinite',
-                                '@keyframes pulseBorder': {
-                                    '0%': { boxShadow: '0 0 0 0 rgba(255, 152, 0, 0.4)' },
-                                    '70%': { boxShadow: '0 0 0 6px rgba(255, 152, 0, 0)' },
-                                    '100%': { boxShadow: '0 0 0 0 rgba(255, 152, 0, 0)' },
-                                }
-                            }}>
-                                <Typography variant="subtitle2" sx={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    color: '#e65100',
-                                    mb: 1
-                                }}>
-                                    <CircularProgress size={16} thickness={4} sx={{ mr: 1 }} color="warning" />
-                                    Workflow Execution Paused
-                                </Typography>
-                                <Typography variant="body2" sx={{ mb: 2 }}>
-                                    The workflow is waiting for data to be sent to this webhook. You can:
-                                </Typography>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                    <Button
-                                        variant="contained"
-                                        color="warning"
-                                        size="medium"
-                                        disabled={testDataSending}
-                                        onClick={handleSendTestData}
-                                        startIcon={testDataSending ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
-                                        sx={{ fontWeight: 'bold' }}
-                                    >
-                                        {testDataSending ? 'Sending...' : 'Send Test Data Now'}
-                                    </Button>
-                                    <Typography variant="caption" sx={{ textAlign: 'center', color: 'text.secondary' }}>
-                                        This will send test data to the webhook and continue workflow execution
-                                    </Typography>
-                                </Box>
-                            </Box>
-                        )}
-
-                        <Box sx={{ mb: 3 }}>
-                            <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
-                                Last Received Payload
-                                {hasWebhookData ?
-                                    <span style={{
-                                        backgroundColor: '#4caf50',
-                                        color: 'white',
-                                        padding: '2px 8px',
-                                        borderRadius: '10px',
-                                        fontSize: '0.75rem',
-                                        marginLeft: '8px'
-                                    }}>
-                                        Data Received
-                                    </span> :
-                                    <span style={{
-                                        backgroundColor: '#9e9e9e',
-                                        color: 'white',
-                                        padding: '2px 8px',
-                                        borderRadius: '10px',
-                                        fontSize: '0.75rem',
-                                        marginLeft: '8px'
-                                    }}>
-                                        {needsWorkflowSave ? 'Save Required' : 'Waiting'}
-                                    </span>
-                                }
-                            </Typography>
-
-                            <Box
-                                sx={{
-                                    p: 2,
-                                    backgroundColor: '#f5f5f5',
-                                    borderRadius: 1,
-                                    mb: 2,
-                                    mt: 2,
-                                    maxHeight: '300px',
-                                    overflow: 'auto',
-                                    border: hasWebhookData ? '1px solid #e0e0e0' :
-                                        (needsWorkflowSave ? '1px dashed #f44336' : '1px dashed #9e9e9e')
-                                }}
-                            >
-                                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                                    {formData.last_payload ?
-                                        JSON.stringify(formData.last_payload, null, 2) :
-                                        (needsWorkflowSave ?
-                                            'Save your workflow first to register webhook and receive data.' :
-                                            'No data received yet. Send a webhook to this URL to see the payload.')
-                                    }
-                                </pre>
-                            </Box>
-
-                            <Paper
-                                elevation={1}
-                                sx={{
-                                    mt: 1,
-                                    p: 1,
-                                    bgcolor: needsWorkflowSave ? '#fff0f0' : '#f0f4ff',
-                                    borderRadius: 1,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    border: needsWorkflowSave ? '1px dashed #f44336' : '1px dashed #2196f3',
-                                    marginBottom: '10px'
-                                }}
-                            >
-                                <Typography variant="caption" sx={{
-                                    fontWeight: 'bold',
-                                    color: needsWorkflowSave ? '#d32f2f' : '#1976d2'
-                                }}>
-                                    <span role="img" aria-label="info">
-                                        {needsWorkflowSave ? '⚠️' : 'ℹ️'}
-                                    </span>
-                                    {needsWorkflowSave
-                                        ? ' Save workflow to register webhook and enable data reception'
-                                        : ' External webhook data may need a manual refresh'
-                                    }
-                                </Typography>
-                            </Paper>
-
-                            <Button
-                                variant="outlined"
-                                color="info"
-                                size="small"
-                                startIcon={<RefreshIcon />}
-                                onClick={async () => {
-                                    if (needsWorkflowSave) {
-                                        alert("Please save your workflow first to register this webhook.");
-                                        return;
-                                    }
-
-                                    if (formData.webhook_id && node) {
-                                        try {
-                                            // Try to get workflow ID from props, URL path, or node data
-                                            const currentWorkflowId = workflowId ||
-                                                window.location.pathname.split('/').pop() ||
-                                                formData.workflow_id;
-
-                                            if (!currentWorkflowId) {
-                                                console.error("Could not determine workflow ID for refresh");
-                                                alert("Could not determine workflow ID. Try saving the workflow first.");
-                                                return;
-                                            }
-
-                                            console.log("Manually refreshing webhook data for workflow:", currentWorkflowId);
-                                            // Fetch the current workflow to get latest node data
-                                            const response = await axios.get(`/api/workflows/${currentWorkflowId}`);
-                                            const workflow = response.data;
-
-                                            if (!workflow || !workflow.nodes) {
-                                                console.error("No workflow data returned");
-                                                return;
-                                            }
-
-                                            // Find this node in the workflow
-                                            const updatedNode = workflow.nodes.find(n => n.id === node.id);
-                                            if (updatedNode && updatedNode.data?.last_payload) {
-                                                console.log("Found updated webhook data:", updatedNode.data.last_payload);
-                                                // Update parent component state
-                                                onUpdate(node.id, {
-                                                    last_payload: updatedNode.data.last_payload,
-                                                    dataLoaded: true
-                                                });
-                                                // Also update local formData state
-                                                setFormData(prevFormData => ({
-                                                    ...prevFormData,
-                                                    last_payload: updatedNode.data.last_payload,
-                                                    dataLoaded: true
-                                                }));
-                                            } else {
-                                                console.log("No webhook data found in updated node");
-
-                                                // Try to get webhook data directly from the debug endpoint
-                                                try {
-                                                    const webhookDebugResponse = await axios.get('/api/webhooks/debug');
-                                                    const webhookData = webhookDebugResponse.data;
-
-                                                    if (formData.webhook_id && webhookData.webhook_payloads[formData.webhook_id]) {
-                                                        console.log("Found data directly in webhook_payloads:",
-                                                            webhookData.webhook_payloads[formData.webhook_id]);
-
-                                                        // Update with data from webhook_payloads
-                                                        onUpdate(node.id, {
-                                                            last_payload: webhookData.webhook_payloads[formData.webhook_id],
-                                                            dataLoaded: true
-                                                        });
-
-                                                        // Also update local formData state
-                                                        setFormData(prevFormData => ({
-                                                            ...prevFormData,
-                                                            last_payload: webhookData.webhook_payloads[formData.webhook_id],
-                                                            dataLoaded: true
-                                                        }));
-
-                                                        return; // Success, no need to show alert
-                                                    }
-
-                                                    // No data found in webhook_payloads either
-                                                    const webhookEntries = Object.entries(webhookData.webhook_mappings || {})
-                                                        .filter(([, mapping]) => mapping.node_id === node.id)
-                                                        .map(([webhookId]) => webhookId);
-
-                                                    if (webhookEntries.length > 0) {
-                                                        console.log("Found webhook mappings for this node:", webhookEntries);
-                                                        alert(`Webhook is registered (ID: ${formData.webhook_id}) but no data has been sent to it yet. Try sending data to this webhook URL first.`);
-                                                    } else {
-                                                        console.log("No webhook mappings found for this node");
-                                                        alert(`No webhook data found. Make sure to send data to this webhook URL: ${window.location.origin}${formData.webhook_id.startsWith('/') ? '' : '/'}${formData.webhook_id}`);
-                                                    }
-                                                } catch (debugError) {
-                                                    console.error("Error fetching webhook debug data:", debugError);
-                                                    alert(`No webhook data found. Try sending data to this webhook URL: ${window.location.origin}${formData.webhook_id.startsWith('/') ? '' : '/'}${formData.webhook_id}`);
-                                                }
-                                            }
-                                        } catch (error) {
-                                            console.error("Error manually refreshing webhook data:", error);
-                                            alert(`Error refreshing webhook data: ${error.message}`);
-                                        }
-                                    }
-                                }}
-                                disabled={!formData.webhook_id && !needsWorkflowSave}
-                                sx={{ mr: 1 }}
-                            >
-                                {needsWorkflowSave ? 'Save Workflow First' : 'Refresh Data'}
-                            </Button>
-
-                            {hasWebhookData && (
-                                <Button
-                                    variant="outlined"
-                                    color="warning"
-                                    size="small"
-                                    onClick={() => {
-                                        if (window.confirm("Clear the current webhook data?")) {
-                                            onUpdate(node.id, { last_payload: null });
-                                            // Also update local formData state
-                                            setFormData(prevFormData => ({
-                                                ...prevFormData,
-                                                last_payload: null
-                                            }));
-                                        }
-                                    }}
-                                >
-                                    Clear Data
-                                </Button>
-                            )}
-                        </Box>
-
-                        <Typography variant="subtitle2" gutterBottom>
-                            How to Use Webhook Data
-                        </Typography>
-                        <Box sx={{ p: 2, backgroundColor: '#e3f2fd', borderRadius: 1, fontSize: '0.875rem' }}>
-                            <p style={{ margin: '0 0 8px 0' }}>After receiving data, you can reference it in subsequent nodes:</p>
-                            <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                                <li>The entire payload is passed to the next node</li>
-                                <li>Access specific fields using dot notation in code nodes</li>
-                                <li>Example: <code>input_data.sample_data.number_value</code></li>
-                            </ul>
-                        </Box>
-                    </>
-                );
+                return <WebhookTriggerForm
+                    node={node}
+                    formData={formData}
+                    setFormData={setFormData}
+                    commonTextFieldProps={commonTextFieldProps}
+                    workflowId={workflowId}
+                    onUpdate={onUpdate}
+                    waitingForWebhookData={waitingForWebhookData}
+                    testDataSending={testDataSending}
+                    handleSendTestData={handleSendTestData}
+                />;
             case 'input':
             case 'default':
-                return (
-                    <>
-                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
-
-                        <TextField
-                            label="Name"
-                            name="node_name"
-                            value={formData.node_name || formData.label || node.type || ''}
-                            placeholder="Give this node a descriptive name"
-                            {...commonTextFieldProps}
-                        />
-                        <Typography variant="caption" color="textSecondary">Node name for identification in the workflow.</Typography>
-                    </>
-                )
+                return <InputNodeForm
+                    node={node}
+                    formData={formData}
+                    nodes={nodes}
+                    edges={edges}
+                    commonTextFieldProps={commonTextFieldProps}
+                    NodeInputSelector={NodeInputSelector}
+                />;
             default:
-                return (
-                    <>
-                        <NodeInputSelector node={node} nodes={nodes} edges={edges} />
-
-                        <Typography variant="body2" color="textSecondary">No specific configuration available for node type: {node.type}</Typography>
-                        <TextField
-                            label="Data (JSON - Read Only)"
-                            multiline
-                            rows={8}
-                            value={JSON.stringify(formData, null, 2)}
-                            InputProps={{ readOnly: true, sx: { fontFamily: 'monospace', backgroundColor: '#f5f5f5' } }}
-                            {...commonTextFieldProps}
-                        />
-                    </>
-                );
+                return <GenericNodeForm
+                    node={node}
+                    formData={formData}
+                    nodes={nodes}
+                    edges={edges}
+                    commonTextFieldProps={commonTextFieldProps}
+                    NodeInputSelector={NodeInputSelector}
+                />;
         }
     };
 
