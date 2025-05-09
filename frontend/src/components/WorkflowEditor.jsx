@@ -1833,36 +1833,128 @@ function WorkflowEditor() {
                 }}
             >
                 {/* Top AppBar */}
-                <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
-                    <Toolbar sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <AppBar position="fixed" sx={{
+                    zIndex: (theme) => theme.zIndex.drawer + 1,
+                    background: 'linear-gradient(90deg, #1a237e 0%, #283593 100%)',
+                    boxShadow: '0 3px 10px rgba(0,0,0,0.2)'
+                }}>
+                    <Toolbar sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '0.5rem 1rem',
+                        height: '64px'
+                    }}>
                         {/* Left side: Title */}
-                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            <AccountTreeIcon sx={{ mr: 2 }} />
-                            <Typography variant="h6" noWrap component="div">
+                        <Box sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            '&:hover': { opacity: 0.9 },
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                        }}>
+                            <AccountTreeIcon sx={{ mr: 1.5, fontSize: 28 }} />
+                            <Typography variant="h6" fontWeight="600" noWrap component="div">
                                 Mini Workflow Engine
                             </Typography>
                         </Box>
 
                         {/* Center: Workflow Name & Load */}
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            maxWidth: '60%',
+                            flexGrow: 1,
+                            mx: 2
+                        }}>
                             <TextField
                                 label="Workflow Name"
                                 variant="outlined"
                                 size="small"
                                 value={workflowName}
                                 onChange={(e) => setWorkflowName(e.target.value)}
-                                sx={{ mr: 1, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 1, input: { color: 'white' }, label: { color: '#eee' } }}
+                                sx={{
+                                    mr: 1,
+                                    backgroundColor: 'rgba(255,255,255,0.08)',
+                                    borderRadius: 1,
+                                    input: { color: 'white' },
+                                    label: { color: '#eee' },
+                                    '& .MuiOutlinedInput-root': {
+                                        '& fieldset': {
+                                            borderColor: 'rgba(255,255,255,0.2)',
+                                        },
+                                        '&:hover fieldset': {
+                                            borderColor: 'rgba(255,255,255,0.5)',
+                                        },
+                                    },
+                                    flexGrow: 1,
+                                    maxWidth: 220
+                                }}
                             />
-                            <FormControl variant="outlined" size="small" sx={{ mr: 1, minWidth: 200, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 1 }}>
+                            <FormControl
+                                variant="outlined"
+                                size="small"
+                                sx={{
+                                    mr: 1,
+                                    minWidth: 200,
+                                    maxWidth: 300,
+                                    backgroundColor: 'rgba(255,255,255,0.08)',
+                                    borderRadius: 1,
+                                    flexGrow: 1,
+                                    '& .MuiOutlinedInput-root': {
+                                        '& fieldset': {
+                                            borderColor: 'rgba(255,255,255,0.2)',
+                                        },
+                                        '&:hover fieldset': {
+                                            borderColor: 'rgba(255,255,255,0.5)',
+                                        },
+                                    }
+                                }}>
                                 <InputLabel id="workflow-select-label" sx={{ color: '#eee' }}>Select Workflow</InputLabel>
                                 <Select labelId="workflow-select-label" value={selectedWorkflowId} onChange={(e) => setSelectedWorkflowId(e.target.value)} label="Select Workflow" sx={{ color: 'white' }}>
                                     <MenuItem value=""><em>None</em></MenuItem>
                                     {availableWorkflows.map((wf) => <MenuItem key={wf.id} value={wf.id}>{wf.name} ({wf.id})</MenuItem>)}
                                 </Select>
                             </FormControl>
-                            <Button variant="outlined" size="small" onClick={fetchWorkflows} sx={{ mr: 1, color: 'white', borderColor: 'rgba(255,255,255,0.5)' }}><RefreshIcon fontSize="small" /></Button>
-                            <Button variant="contained" startIcon={<FolderOpenIcon />} onClick={handleLoadWorkflow}>Load</Button>
-                            <Button variant="contained" color="secondary" startIcon={<SaveIcon />} onClick={handleSaveWorkflow} sx={{ ml: 1 }}>Save</Button>
+                            <IconButton
+                                size="small"
+                                onClick={fetchWorkflows}
+                                sx={{
+                                    color: 'white',
+                                    borderRadius: '50%',
+                                    backgroundColor: 'rgba(255,255,255,0.08)',
+                                    '&:hover': { backgroundColor: 'rgba(255,255,255,0.15)' },
+                                }}
+                            >
+                                <RefreshIcon fontSize="small" />
+                            </IconButton>
+                            <Button
+                                variant="contained"
+                                startIcon={<FolderOpenIcon />}
+                                onClick={handleLoadWorkflow}
+                                sx={{
+                                    ml: 1,
+                                    backgroundColor: 'rgba(255,255,255,0.12)',
+                                    '&:hover': { backgroundColor: 'rgba(255,255,255,0.2)' },
+                                    boxShadow: 'none',
+                                    fontWeight: 500
+                                }}
+                            >
+                                Load
+                            </Button>
+                            <Button
+                                variant="contained"
+                                color="secondary"
+                                startIcon={<SaveIcon />}
+                                onClick={handleSaveWorkflow}
+                                sx={{
+                                    ml: 1,
+                                    boxShadow: 'none',
+                                    fontWeight: 500
+                                }}
+                            >
+                                Save
+                            </Button>
                         </Box>
 
                         {/* Right side: Actions (Run, Test, Activate) */}
@@ -1875,6 +1967,16 @@ function WorkflowEditor() {
                                         startIcon={<PlayArrowIcon />}
                                         onClick={handleRunWorkflow}
                                         disabled={!workflowId || isTestingWorkflow} // Disable if no workflow or currently testing
+                                        sx={{
+                                            borderRadius: '4px',
+                                            boxShadow: 'none',
+                                            fontWeight: 500,
+                                            textTransform: 'none',
+                                            '&.Mui-disabled': {
+                                                backgroundColor: 'rgba(76, 175, 80, 0.3)',
+                                                color: 'rgba(255, 255, 255, 0.6)'
+                                            }
+                                        }}
                                     >
                                         Run Workflow
                                     </Button>
@@ -1883,12 +1985,20 @@ function WorkflowEditor() {
                             <Tooltip title="Test the full workflow logic. Waits for webhook data if needed. Marks workflow as tested on success.">
                                 <span>
                                     <Button
-                                        variant="outlined"
+                                        variant="contained"
                                         color="info"
-                                        startIcon={<ScienceIcon />} // Changed icon
+                                        startIcon={<ScienceIcon />}
                                         onClick={handleTestWorkflow}
                                         disabled={!workflowId || isTestingWorkflow}
-                                        sx={{ color: 'white', borderColor: 'rgba(255,255,255,0.7)' }}
+                                        sx={{
+                                            boxShadow: 'none',
+                                            fontWeight: 500,
+                                            textTransform: 'none',
+                                            '&.Mui-disabled': {
+                                                backgroundColor: 'rgba(33, 150, 243, 0.3)',
+                                                color: 'rgba(255, 255, 255, 0.6)'
+                                            }
+                                        }}
                                     >
                                         Test Workflow
                                     </Button>
@@ -1903,15 +2013,34 @@ function WorkflowEditor() {
                                                 onChange={handleToggleActivation}
                                                 disabled={!isWorkflowTested || !workflowId || isTestingWorkflow}
                                                 color="success"
+                                                sx={{
+                                                    '& .MuiSwitch-switchBase.Mui-checked': {
+                                                        color: '#4caf50',
+                                                        '&:hover': {
+                                                            backgroundColor: 'rgba(76, 175, 80, 0.08)',
+                                                        },
+                                                    },
+                                                    '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+                                                        backgroundColor: '#4caf50',
+                                                    },
+                                                }}
                                             />
                                         }
                                         label={
                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                                {isWorkflowActive ? <CloudDoneIcon color="success" /> : <CloudOffIcon color="disabled" />}
-                                                <Typography variant="body2">{isWorkflowActive ? "Active" : "Inactive"}</Typography>
+                                                {isWorkflowActive ? <CloudDoneIcon color="success" /> : <CloudOffIcon sx={{ color: 'rgba(255,255,255,0.6)' }} />}
+                                                <Typography variant="body2" sx={{ fontWeight: 500 }}>{isWorkflowActive ? "Active" : "Inactive"}</Typography>
                                             </Box>
                                         }
-                                        sx={{ color: 'white' }}
+                                        sx={{
+                                            color: 'white',
+                                            ml: 1,
+                                            mr: 0,
+                                            background: 'rgba(255,255,255,0.08)',
+                                            borderRadius: '4px',
+                                            padding: '0 8px',
+                                            height: '36px'
+                                        }}
                                     />
                                 </span>
                             </Tooltip>
@@ -1921,12 +2050,17 @@ function WorkflowEditor() {
 
                 {/* Testing progress indicator */}
                 {isTestingWorkflow && (
-                    <LinearProgress color="info" />
+                    <LinearProgress color="info" sx={{ height: '3px' }} />
                 )}
 
                 {/* Test status indicators */}
                 {workflowId && (
-                    <Box sx={{ p: 1, borderBottom: '1px solid #e0e0e0', backgroundColor: '#f5f5f5' }}>
+                    <Box sx={{
+                        p: 1,
+                        borderBottom: '1px solid #e0e0e0',
+                        backgroundColor: '#f8f9fa',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                    }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             {isWorkflowTested ? (
                                 <Alert
