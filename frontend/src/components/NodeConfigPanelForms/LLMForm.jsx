@@ -45,8 +45,6 @@ const LLMForm = ({
 
     return (
         <>
-            <NodeInputSelector node={node} nodes={nodes} edges={edges} />
-
             <TextField
                 label="Name"
                 name="node_name"

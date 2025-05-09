@@ -14,7 +14,7 @@ const GenericNodeForm = ({
 }) => {
     return (
         <>
-            <NodeInputSelector node={node} nodes={nodes} edges={edges} />
+            {/* Removed NodeInputSelector from here */}
 
             <Typography variant="body2" color="textSecondary">No specific configuration available for node type: {node.type}</Typography>
             <TextField

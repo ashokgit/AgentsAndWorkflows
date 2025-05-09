@@ -24,13 +24,14 @@ import CodeForm from './NodeConfigPanelForms/CodeForm';
 import ApiConsumerForm from './NodeConfigPanelForms/ApiConsumerForm';
 import WebhookTriggerForm from './NodeConfigPanelForms/WebhookTriggerForm';
 import GenericNodeForm from './NodeConfigPanelForms/GenericNodeForm';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 const modalStyle = {
     position: 'absolute',
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    width: 500,
+    width: 900,
     maxHeight: '80vh',
     bgcolor: 'background.paper',
     boxShadow: 24,
@@ -83,6 +84,32 @@ const headerContainerStyle = {
 // Content container style
 const contentContainerStyle = {
     padding: '24px',
+    display: 'flex',
+    gap: '24px',
+};
+
+// Added styles for the left and right panels
+const leftPanelStyle = {
+    flex: '1',
+    maxWidth: '55%',
+};
+
+const rightPanelStyle = {
+    flex: '1',
+    maxWidth: '45%',
+    borderLeft: '1px solid #e0e0e0',
+    paddingLeft: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px',
+};
+
+const outputSectionStyle = {
+    marginBottom: 0,
+};
+
+const logSectionStyle = {
+    flex: 1,
 };
 
 const headerStyle = {
@@ -128,7 +155,7 @@ const safeJsonParse = (str, fallback = {}) => {
 
 // New component for displaying available inputs from previous nodes
 const NodeInputSelector = ({ node, nodes, edges }) => {
-    const [expanded, setExpanded] = useState(false);
+    const [expanded, setExpanded] = useState(true);
     const [availableInputs, setAvailableInputs] = useState([]);
 
     // Find all nodes that connect to this node (input nodes)
@@ -266,11 +293,15 @@ const NodeInputSelector = ({ node, nodes, edges }) => {
     };
 
     if (availableInputs.length === 0) {
-        return null;
+        return (
+            <Typography variant="body2" color="text.secondary">
+                No inputs available. Connect nodes to this node to see inputs here.
+            </Typography>
+        );
     }
 
     return (
-        <Box sx={{ mt: 3, mb: 2 }}>
+        <Box sx={{ mb: 0 }}>
             <Paper
                 variant="outlined"
                 sx={{ borderRadius: 1, overflow: 'hidden' }}
@@ -287,12 +318,12 @@ const NodeInputSelector = ({ node, nodes, edges }) => {
                     }}
                 >
                     <Typography variant="subtitle2">
-                        Available Inputs ({availableInputs.length})
+                        {expanded ? "Collapse" : "Expand"}
                     </Typography>
                 </Button>
                 <Collapse in={expanded}>
                     <Divider />
-                    <Box sx={{ maxHeight: '250px', overflow: 'auto' }}>
+                    <Box sx={{ maxHeight: '350px', overflow: 'auto' }}>
                         {availableInputs.map((input, index) => (
                             <Box key={input.nodeId} sx={{ mb: 2 }}>
                                 <Typography
@@ -851,11 +882,216 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                 </Box>
 
                 <Box sx={contentContainerStyle}>
-                    <Typography sx={subHeaderStyle}>
-                        Configure node parameters
-                    </Typography>
+                    <Box sx={leftPanelStyle}>
+                        <Typography sx={subHeaderStyle}>
+                            Configure node parameters
+                        </Typography>
 
-                    {renderFormContent()}
+                        {renderFormContent()}
+                    </Box>
+
+                    <Box sx={rightPanelStyle}>
+                        <Box>
+                            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>
+                                Available Inputs
+                            </Typography>
+                            <NodeInputSelector node={node} nodes={nodes} edges={edges} />
+                        </Box>
+
+                        <Box sx={outputSectionStyle}>
+                            <Typography variant="subtitle1" fontWeight="bold">
+                                Outputs
+                            </Typography>
+                            {node?.type === 'webhook_trigger' ? (
+                                <>
+                                    <Typography variant="subtitle2" sx={{ mt: 2, mb: 1, display: 'flex', alignItems: 'center' }}>
+                                        Last Received Payload
+                                        {node?.data?.last_payload ?
+                                            <span style={{
+                                                backgroundColor: '#4caf50',
+                                                color: 'white',
+                                                padding: '2px 8px',
+                                                borderRadius: '10px',
+                                                fontSize: '0.75rem',
+                                                marginLeft: '8px'
+                                            }}>
+                                                Data Received
+                                            </span> :
+                                            <span style={{
+                                                backgroundColor: '#9e9e9e',
+                                                color: 'white',
+                                                padding: '2px 8px',
+                                                borderRadius: '10px',
+                                                fontSize: '0.75rem',
+                                                marginLeft: '8px'
+                                            }}>
+                                                Waiting
+                                            </span>
+                                        }
+                                    </Typography>
+                                    <Box
+                                        sx={{
+                                            p: 2,
+                                            backgroundColor: '#f5f5f5',
+                                            borderRadius: 1,
+                                            mb: 2,
+                                            mt: 1,
+                                            maxHeight: '300px',
+                                            overflow: 'auto',
+                                            border: node?.data?.last_payload ? '1px solid #e0e0e0' : '1px dashed #9e9e9e'
+                                        }}
+                                    >
+                                        <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                            {node?.data?.last_payload ?
+                                                JSON.stringify(node.data.last_payload, null, 2) :
+                                                'No data received yet. Send a webhook to this URL to see the payload.'
+                                            }
+                                        </pre>
+                                    </Box>
+
+                                    <Box sx={{ display: 'flex', gap: 1, mt: 1, mb: 3 }}>
+                                        <Button
+                                            variant="outlined"
+                                            color="info"
+                                            size="small"
+                                            startIcon={<RefreshIcon />}
+                                            onClick={async () => {
+                                                try {
+                                                    const currentWorkflowId = node?.data?.workflow_id;
+                                                    if (currentWorkflowId && node.id) {
+                                                        const response = await axios.get(`/api/workflows/${currentWorkflowId}`);
+                                                        const workflow = response.data;
+                                                        const updatedNode = workflow.nodes.find(n => n.id === node.id);
+                                                        if (updatedNode && updatedNode.data?.last_payload) {
+                                                            onUpdate(node.id, {
+                                                                last_payload: updatedNode.data.last_payload,
+                                                                dataLoaded: true
+                                                            });
+                                                        }
+                                                    }
+                                                } catch (error) {
+                                                    console.error("Error refreshing webhook data:", error);
+                                                }
+                                            }}
+                                        >
+                                            Refresh Data
+                                        </Button>
+
+                                        {node?.data?.last_payload && (
+                                            <Button
+                                                variant="outlined"
+                                                color="warning"
+                                                size="small"
+                                                onClick={() => {
+                                                    if (window.confirm("Clear the current webhook data?")) {
+                                                        onUpdate(node.id, { last_payload: null });
+                                                    }
+                                                }}
+                                            >
+                                                Clear Data
+                                            </Button>
+                                        )}
+                                    </Box>
+
+                                    <Typography variant="subtitle2" gutterBottom sx={{ mt: 3 }}>
+                                        How to Use Webhook Data
+                                    </Typography>
+                                    <Box sx={{ p: 2, backgroundColor: '#e3f2fd', borderRadius: 1, fontSize: '0.875rem' }}>
+                                        <p style={{ margin: '0 0 8px 0' }}>After receiving data, you can reference it in subsequent nodes:</p>
+                                        <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                                            <li>The entire payload is passed to the next node</li>
+                                            <li>Access specific fields using dot notation in code nodes</li>
+                                            <li>Example: <code>input_data.sample_data.number_value</code></li>
+                                        </ul>
+                                    </Box>
+                                </>
+                            ) : node?.type === 'code' && !node?.data?.executed ? (
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                    No output data available. Write code and run the workflow to see results here.
+                                </Typography>
+                            ) : (
+                                <>
+                                    {node?.data?.last_output && (
+                                        <Paper sx={{ p: 2, bgcolor: '#f5f7ff', mt: 1, maxHeight: '300px', overflow: 'auto' }}>
+                                            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                                {typeof node.data.last_output === 'object'
+                                                    ? JSON.stringify(node.data.last_output, null, 2)
+                                                    : node.data.last_output}
+                                            </pre>
+                                        </Paper>
+                                    )}
+                                    {testState.result && (
+                                        <Paper sx={{ p: 2, bgcolor: '#f5f7ff', mt: 1, maxHeight: '300px', overflow: 'auto' }}>
+                                            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                                {JSON.stringify(testState.result, null, 2)}
+                                            </pre>
+                                        </Paper>
+                                    )}
+                                    {testState.error && (
+                                        <Paper sx={{ p: 2, bgcolor: '#ffeef0', mt: 1, maxHeight: '300px', overflow: 'auto' }}>
+                                            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#d32f2f' }}>
+                                                {testState.error}
+                                            </pre>
+                                        </Paper>
+                                    )}
+                                    {!node?.data?.last_output && !testState.result && !testState.error && (
+                                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                            No output data available. Run a test to see results here.
+                                        </Typography>
+                                    )}
+                                </>
+                            )}
+                        </Box>
+
+                        <Box sx={logSectionStyle}>
+                            <Typography variant="subtitle1" fontWeight="bold">
+                                Logs
+                            </Typography>
+                            {node?.type === 'webhook_trigger' ? (
+                                <>
+                                    {node?.data?.logs && node.data.logs.length > 0 ? (
+                                        <Paper sx={{ p: 2, bgcolor: '#f8f8f8', mt: 1, maxHeight: '300px', overflow: 'auto' }}>
+                                            {node.data.logs.map((log, idx) => (
+                                                <Box key={idx} sx={{ mb: 1, borderBottom: idx < node.data.logs.length - 1 ? '1px solid #eee' : 'none', pb: 1 }}>
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        {new Date(log.timestamp).toLocaleString()}
+                                                    </Typography>
+                                                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                                        {log.message}
+                                                    </pre>
+                                                </Box>
+                                            ))}
+                                        </Paper>
+                                    ) : (
+                                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                            Webhook activity logs will appear here.
+                                        </Typography>
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    {node?.data?.logs && node.data.logs.length > 0 ? (
+                                        <Paper sx={{ p: 2, bgcolor: '#f8f8f8', mt: 1, maxHeight: '300px', overflow: 'auto' }}>
+                                            {node.data.logs.map((log, idx) => (
+                                                <Box key={idx} sx={{ mb: 1, borderBottom: idx < node.data.logs.length - 1 ? '1px solid #eee' : 'none', pb: 1 }}>
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        {new Date(log.timestamp).toLocaleString()}
+                                                    </Typography>
+                                                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                                        {log.message}
+                                                    </pre>
+                                                </Box>
+                                            ))}
+                                        </Paper>
+                                    ) : (
+                                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                            No logs available.
+                                        </Typography>
+                                    )}
+                                </>
+                            )}
+                        </Box>
+                    </Box>
                 </Box>
             </Paper>
         </Modal>

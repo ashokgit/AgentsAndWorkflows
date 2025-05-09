@@ -1,6 +1,8 @@
 import React from 'react';
 import TextField from '@mui/material/TextField';
 import FormHelperText from '@mui/material/FormHelperText';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
 
 // Assuming NodeInputSelector and DraggableTextField are passed as props
 
@@ -17,7 +19,7 @@ const CodeForm = ({
 }) => {
     return (
         <>
-            <NodeInputSelector node={node} nodes={nodes} edges={edges} />
+            {/* Removed NodeInputSelector from here */}
 
             <TextField
                 label="Name"
@@ -37,7 +39,9 @@ const CodeForm = ({
                 InputProps={{ sx: { fontFamily: 'monospace' } }}
                 {...commonTextFieldProps}
             />
-            <FormHelperText sx={{ ml: '10px' }}>Input available as `input_data` dict. Drag node outputs to use them.</FormHelperText>
+            <FormHelperText sx={{ ml: '10px' }}>
+                Your code receives upstream node outputs as `input_data` dict. The return value becomes this node's output.
+            </FormHelperText>
         </>
     );
 };

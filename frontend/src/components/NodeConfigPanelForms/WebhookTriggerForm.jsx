@@ -260,6 +260,7 @@ const WebhookTriggerForm = ({
                 </Box>
             )}
 
+            {/* Last Received Payload section moved to the right panel in NodeConfigPanel.jsx
             <Box sx={{ mb: 3 }}>
                 <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
                     Last Received Payload
@@ -366,7 +367,9 @@ const WebhookTriggerForm = ({
                     </Button>
                 )}
             </Box>
+            */}
 
+            {/* How to Use Webhook Data section moved to the right panel in NodeConfigPanel.jsx
             <Typography variant="subtitle2" gutterBottom>
                 How to Use Webhook Data
             </Typography>
@@ -378,6 +381,7 @@ const WebhookTriggerForm = ({
                     <li>Example: <code>input_data.sample_data.number_value</code></li>
                 </ul>
             </Box>
+            */}
         </>
     );
 };
