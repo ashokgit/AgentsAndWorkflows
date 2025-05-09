@@ -45,6 +45,8 @@ import CloudDoneIcon from '@mui/icons-material/CloudDone'; // For active status
 import Tooltip from '@mui/material/Tooltip';
 import Alert from '@mui/material/Alert';
 import LinearProgress from '@mui/material/LinearProgress';
+import Snackbar from '@mui/material/Snackbar';
+import MuiAlert from '@mui/material/Alert';
 
 // MUI Icons
 import InputIcon from '@mui/icons-material/Input';
@@ -326,6 +328,13 @@ function WorkflowEditor() {
     const [isWorkflowTested, setIsWorkflowTested] = useState(false);
     const [lastTestedDate, setLastTestedDate] = useState(null);
     const [isTestingWorkflow, setIsTestingWorkflow] = useState(false); // For UI loading state
+    const [webhookSnackbar, setWebhookSnackbar] = useState({
+        open: false,
+        nodeId: null,
+        nodeLabel: '',
+        webhookId: '',
+        runId: null
+    });
 
     // Toggle category expansion
     const toggleCategory = (category) => {
@@ -812,10 +821,62 @@ function WorkflowEditor() {
 
                     // Update node status based on log entry
                     if (logEntry.node_id) {
+                        // Store both status and run ID in the node execution status
+                        const runId = logEntry.run_id || null;
                         setNodeExecutionStatus(prevStatus => ({
                             ...prevStatus,
-                            [logEntry.node_id]: logEntry.status || 'Unknown' // Update status for this node
+                            [logEntry.node_id]: {
+                                status: logEntry.status || 'Unknown',
+                                runId
+                            }
                         }));
+
+                        // Also need to update the node itself to store runId for state tracking between runs
+                        if (logEntry.node_type === 'webhook_trigger' && runId) {
+                            setNodes(nds =>
+                                nds.map(node => {
+                                    if (node.id === logEntry.node_id) {
+                                        return {
+                                            ...node,
+                                            data: {
+                                                ...node.data,
+                                                status: logEntry.status,
+                                                runId,
+                                            }
+                                        };
+                                    }
+                                    return node;
+                                })
+                            );
+                        }
+
+                        // Show snackbar notification if a webhook node is waiting for data
+                        if (logEntry.status === 'Waiting' &&
+                            logEntry.node_type &&
+                            (logEntry.node_type === 'webhook_trigger' || logEntry.node_type === 'webhook')) {
+
+                            // Find the node to get its label and webhook_id
+                            const waitingNode = nodes.find(n => n.id === logEntry.node_id);
+                            if (waitingNode) {
+                                const nodeLabel = waitingNode.data?.webhook_name || waitingNode.data?.node_name || waitingNode.data?.label || logEntry.node_id;
+                                const webhookId = waitingNode.data?.webhook_id || '';
+
+                                setWebhookSnackbar({
+                                    open: true,
+                                    nodeId: logEntry.node_id,
+                                    nodeLabel,
+                                    webhookId,
+                                    runId
+                                });
+                            }
+                        }
+
+                        // Close snackbar if node was waiting but now isn't
+                        if (webhookSnackbar.open &&
+                            logEntry.node_id === webhookSnackbar.nodeId &&
+                            logEntry.status !== 'Waiting') {
+                            setWebhookSnackbar(prev => ({ ...prev, open: false }));
+                        }
                     }
                     // Clear status if it's the overall 'End' step
                     if (logEntry.step === 'End') {
@@ -875,7 +936,8 @@ function WorkflowEditor() {
     useEffect(() => {
         setNodes((nds) =>
             nds.map((node) => {
-                const status = nodeExecutionStatus[node.id] || null; // Get status or null
+                const nodeState = nodeExecutionStatus[node.id] || null; // Get state or null
+                const status = nodeState?.status || null;
                 // Avoid unnecessary updates if status hasn't changed
                 if (node.data?.status === status) {
                     return node;
@@ -884,7 +946,9 @@ function WorkflowEditor() {
                     ...node,
                     data: {
                         ...node.data,
-                        status: status, // Add/update status in node data
+                        status, // Add/update status in node data
+                        // Also include runId if it's available (helps webhook nodes track state)
+                        runId: nodeState?.runId || node.data?.runId
                     },
                 };
             })
@@ -1300,7 +1364,10 @@ function WorkflowEditor() {
                     if (logEntry.node_id) {
                         setNodeExecutionStatus(prevStatus => ({
                             ...prevStatus,
-                            [logEntry.node_id]: logEntry.status || 'Unknown'
+                            [logEntry.node_id]: {
+                                status: logEntry.status || 'Unknown',
+                                runId: logEntry.run_id || null
+                            }
                         }));
                     }
 
@@ -1348,8 +1415,8 @@ function WorkflowEditor() {
         // Find which edges should be highlighted based on node execution
         setEdges(eds =>
             eds.map(edge => {
-                const sourceStatus = nodeExecutionStatus[edge.source];
-                const targetStatus = nodeExecutionStatus[edge.target];
+                const sourceStatus = nodeExecutionStatus[edge.source]?.status;
+                const targetStatus = nodeExecutionStatus[edge.target]?.status;
 
                 // Edge is active if source is done and target is running or pending
                 if (sourceStatus === 'Success' &&
@@ -1414,6 +1481,27 @@ function WorkflowEditor() {
             })
         );
     }, [nodeExecutionStatus, setEdges]);
+
+    // Function to handle copying webhook URL from snackbar
+    const handleCopyWebhookUrl = () => {
+        if (webhookSnackbar.webhookId) {
+            const webhookPath = webhookSnackbar.webhookId;
+            const webhookUrl = `${window.location.origin}${webhookPath.startsWith('/') ? '' : '/'}${webhookPath}`;
+            navigator.clipboard.writeText(webhookUrl);
+            alert("Webhook URL copied to clipboard.");
+        }
+    };
+
+    // Function to generate curl command directly from snackbar
+    const handleCopyWebhookTestCommand = () => {
+        if (webhookSnackbar.webhookId) {
+            const webhookPath = webhookSnackbar.webhookId;
+            const webhookUrl = `${window.location.origin}${webhookPath.startsWith('/') ? '' : '/'}${webhookPath}`;
+            const curlCommand = `curl -X POST ${webhookUrl} -H "Content-Type: application/json" -d '{"event":"test.event","data":{"user_id":"12345","email":"test@example.com","name":"Test User"},"timestamp":"${new Date().toISOString()}"}'`;
+            navigator.clipboard.writeText(curlCommand);
+            alert("Curl command copied to clipboard. Paste it in your terminal to test the webhook.");
+        }
+    };
 
     return (
         <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -1706,6 +1794,52 @@ function WorkflowEditor() {
                 workflowId={workflowId}
                 edges={edges}
             />
+
+            {/* Webhook waiting notification */}
+            <Snackbar
+                open={webhookSnackbar.open}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                sx={{ bottom: { xs: 20, sm: 40 }, maxWidth: 500 }}
+            >
+                <MuiAlert
+                    elevation={6}
+                    variant="filled"
+                    severity="warning"
+                    sx={{ width: '100%', '& .MuiAlert-action': { alignItems: 'center' } }}
+                    action={
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                            <Button
+                                color="inherit"
+                                size="small"
+                                onClick={handleCopyWebhookUrl}
+                                sx={{ fontSize: '0.75rem' }}
+                            >
+                                Copy URL
+                            </Button>
+                            <Button
+                                color="inherit"
+                                size="small"
+                                onClick={handleCopyWebhookTestCommand}
+                                sx={{ fontSize: '0.75rem' }}
+                            >
+                                Copy Test Cmd
+                            </Button>
+                        </Box>
+                    }
+                >
+                    <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                        <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                            Workflow Paused: Waiting for Webhook Data
+                        </Typography>
+                        <Typography variant="caption">
+                            Test run paused at node "<b>{webhookSnackbar.nodeLabel}</b>". Send data to the webhook URL to continue execution.
+                        </Typography>
+                        <Typography variant="caption" sx={{ mt: 0.5 }}>
+                            <i>Tip: Use the "Copy Test Cmd" button to generate a curl command you can run in your terminal.</i>
+                        </Typography>
+                    </Box>
+                </MuiAlert>
+            </Snackbar>
         </Box>
     );
 }

@@ -26,6 +26,11 @@ import Collapse from '@mui/material/Collapse';
 import Tooltip from '@mui/material/Tooltip';
 import LinkIcon from '@mui/icons-material/Link';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import LaunchIcon from '@mui/icons-material/Launch';
+import Chip from '@mui/material/Chip';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import SendIcon from '@mui/icons-material/Send';
 
 const modalStyle = {
     position: 'absolute',
@@ -456,6 +461,35 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
         result: null,
         error: null
     });
+    const [waitingForWebhookData, setWaitingForWebhookData] = useState(false);
+    const [testDataSending, setTestDataSending] = useState(false);
+
+    useEffect(() => {
+        if (!open) return;
+
+        // Initialize form data from node
+        if (node) {
+            setFormData({ ...node.data });
+
+            // Check if this node is waiting for webhook data during testing
+            if (node.type === 'webhook_trigger' && node.data?.status === 'Waiting') {
+                setWaitingForWebhookData(true);
+            } else {
+                setWaitingForWebhookData(false);
+            }
+        }
+    }, [node, open]);
+
+    // Check for node status changes to detect when webhook is waiting for data
+    useEffect(() => {
+        if (!open || !node) return;
+
+        if (node.type === 'webhook_trigger' && node.data?.status === 'Waiting') {
+            setWaitingForWebhookData(true);
+        } else if (waitingForWebhookData && node.data?.status !== 'Waiting') {
+            setWaitingForWebhookData(false);
+        }
+    }, [node?.data?.status, open, node, waitingForWebhookData]);
 
     useEffect(() => {
         if (!node) return;
@@ -688,6 +722,49 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                 testSuccess: false,
                 status: 'failed'
             });
+        }
+    };
+
+    // Helper function to send test data
+    const handleSendTestData = async () => {
+        if (!formData.webhook_id) return;
+
+        setTestDataSending(true);
+        try {
+            // Ensure the webhook path is correct (should be /api/webhooks/...)
+            let webhookPath = '';
+            if (formData.webhook_id.includes('/api/webhooks/')) {
+                webhookPath = formData.webhook_id;
+            } else if (formData.webhook_id.startsWith('/')) {
+                webhookPath = `/api/webhooks${formData.webhook_id}`;
+            } else {
+                webhookPath = `/api/webhooks/${formData.webhook_id}`;
+            }
+
+            // Send test data
+            const testData = {
+                event: "test.event",
+                data: {
+                    user_id: "12345",
+                    email: "test@example.com",
+                    name: "Test User",
+                    timestamp: new Date().toISOString()
+                }
+            };
+
+            const response = await axios.post(webhookPath, testData);
+
+            // Update UI to show success
+            if (response.data.success) {
+                alert("Test data sent successfully! Workflow execution will continue.");
+            } else {
+                alert("Webhook received the data but reported an issue: " + response.data.message);
+            }
+        } catch (error) {
+            console.error("Error sending test data:", error);
+            alert(`Error: ${error.response?.data?.detail || error.message}`);
+        } finally {
+            setTestDataSending(false);
         }
     };
 
@@ -1432,6 +1509,24 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                         Save Required
                                     </span>
                                 }
+                                {waitingForWebhookData &&
+                                    <span style={{
+                                        backgroundColor: '#ff9800',
+                                        color: 'white',
+                                        padding: '2px 8px',
+                                        borderRadius: '10px',
+                                        fontSize: '0.75rem',
+                                        marginLeft: '8px',
+                                        animation: 'pulse 1.5s infinite',
+                                        '@keyframes pulse': {
+                                            '0%': { opacity: 0.8 },
+                                            '50%': { opacity: 1 },
+                                            '100%': { opacity: 0.8 },
+                                        }
+                                    }}>
+                                        Waiting For Data
+                                    </span>
+                                }
                             </Typography>
                             <Typography
                                 sx={{
@@ -1498,6 +1593,52 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                 </Box>
                             )}
                         </Box>
+
+                        {/* Test Status Panel - Only shown when waiting for webhook data during a test */}
+                        {waitingForWebhookData && (
+                            <Box sx={{
+                                mb: 3,
+                                p: 2,
+                                borderRadius: 1,
+                                border: '2px solid #ff9800',
+                                backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                                animation: 'pulseBorder 2s infinite',
+                                '@keyframes pulseBorder': {
+                                    '0%': { boxShadow: '0 0 0 0 rgba(255, 152, 0, 0.4)' },
+                                    '70%': { boxShadow: '0 0 0 6px rgba(255, 152, 0, 0)' },
+                                    '100%': { boxShadow: '0 0 0 0 rgba(255, 152, 0, 0)' },
+                                }
+                            }}>
+                                <Typography variant="subtitle2" sx={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    color: '#e65100',
+                                    mb: 1
+                                }}>
+                                    <CircularProgress size={16} thickness={4} sx={{ mr: 1 }} color="warning" />
+                                    Workflow Execution Paused
+                                </Typography>
+                                <Typography variant="body2" sx={{ mb: 2 }}>
+                                    The workflow is waiting for data to be sent to this webhook. You can:
+                                </Typography>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                    <Button
+                                        variant="contained"
+                                        color="warning"
+                                        size="medium"
+                                        disabled={testDataSending}
+                                        onClick={handleSendTestData}
+                                        startIcon={testDataSending ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
+                                        sx={{ fontWeight: 'bold' }}
+                                    >
+                                        {testDataSending ? 'Sending...' : 'Send Test Data Now'}
+                                    </Button>
+                                    <Typography variant="caption" sx={{ textAlign: 'center', color: 'text.secondary' }}>
+                                        This will send test data to the webhook and continue workflow execution
+                                    </Typography>
+                                </Box>
+                            </Box>
+                        )}
 
                         <Box sx={{ mb: 3 }}>
                             <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>

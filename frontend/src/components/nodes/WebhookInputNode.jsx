@@ -8,6 +8,9 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import SaveIcon from '@mui/icons-material/Save';
+import Badge from '@mui/material/Badge';
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
+import Chip from '@mui/material/Chip';
 import axios from 'axios';
 
 function WebhookInputNode(props) {
@@ -19,6 +22,8 @@ function WebhookInputNode(props) {
     const [showLoader, setShowLoader] = useState(false);
     const [needsSave, setNeedsSave] = useState(false);
     const [isCheckingData, setIsCheckingData] = useState(false);
+    const [isInTestMode, setIsInTestMode] = useState(false);
+    const [lastRunId, setLastRunId] = useState(props.data?.lastRunId || null);
 
     // Ref to keep the latest payload JSON string for comparison
     const lastPayloadJsonRef = useRef(
@@ -28,6 +33,39 @@ function WebhookInputNode(props) {
     // Check if the webhook is properly configured and has data
     const isConfigured = !!props.data?.webhook_id;
     const hasPayload = !!props.data?.last_payload;
+    const isWaitingForData = props.data?.status === 'Waiting';
+
+    // Reset state when entering a new test run
+    useEffect(() => {
+        // If the node transitions to Waiting status and it's a new run,
+        // we need to reset the data indicators
+        if (isWaitingForData && props.data?.runId && props.data.runId !== lastRunId) {
+            console.log("New test run detected, resetting webhook node state", props.data.runId);
+            setLastRunId(props.data.runId);
+            setHasProcessedData(false);
+            setUpdateTime(null);
+
+            // Tell parent component to clear previous payload data during test
+            if (props.updateNodeData && props.data.last_payload) {
+                props.updateNodeData(props.id, {
+                    last_payload: null,
+                    dataLoaded: false,
+                    lastRunId: props.data.runId
+                });
+            }
+        }
+    }, [isWaitingForData, props.data?.runId, lastRunId, props.id, props.updateNodeData, props.data?.last_payload]);
+
+    // Effect to detect when node is in test mode waiting
+    useEffect(() => {
+        // Detect if we're in a test run and waiting for webhook data
+        if (props.data?.status === 'Waiting') {
+            setIsInTestMode(true);
+        } else if (isInTestMode && props.data?.status && props.data?.status !== 'Waiting') {
+            // Once we were waiting but now have a different status, reset the test mode flag
+            setIsInTestMode(false);
+        }
+    }, [props.data?.status, isInTestMode]);
 
     // Effect to detect if this is a newly added webhook that needs saving
     useEffect(() => {
@@ -116,9 +154,10 @@ function WebhookInputNode(props) {
     const calculateStatus = useCallback(() => {
         if (needsSave) return 'error'; // Workflow needs to be saved first
         if (!isConfigured) return 'error'; // Webhook not configured
-        if (hasPayload) return 'success'; // Has data
+        if (isWaitingForData) return 'warning'; // Waiting for webhook data during test
+        if (hasPayload && !isWaitingForData) return 'success'; // Has data and not waiting
         return 'idle'; // Waiting for data
-    }, [isConfigured, hasPayload, needsSave]);
+    }, [isConfigured, hasPayload, needsSave, isWaitingForData]);
 
     const [nodeStatus, setNodeStatus] = useState(() => calculateStatus());
 
@@ -176,9 +215,10 @@ function WebhookInputNode(props) {
     const getStatusMessage = useCallback(() => {
         if (needsSave) return "Workflow must be saved to register webhook";
         if (!isConfigured) return "Webhook not configured. Save your workflow.";
-        if (hasPayload) return `Data received: ${updateTime ? new Date(updateTime).toLocaleTimeString() : 'Unknown time'}`;
+        if (isWaitingForData) return "Waiting for webhook data during test";
+        if (hasPayload && !isWaitingForData) return `Data received: ${updateTime ? new Date(updateTime).toLocaleTimeString() : 'Unknown time'}`;
         return "Waiting for webhook data";
-    }, [needsSave, isConfigured, hasPayload, updateTime]);
+    }, [needsSave, isConfigured, hasPayload, updateTime, isWaitingForData]);
 
     // Create modified props with status and validation message
     const nodeProps = {
@@ -197,11 +237,36 @@ function WebhookInputNode(props) {
 
     return (
         <BaseNode {...nodeProps}>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <WebhookIcon
-                    fontSize="small"
-                    color={hasPayload ? "primary" : "inherit"}
-                />
+            <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', width: '100%' }}>
+                {isWaitingForData ? (
+                    <Badge
+                        overlap="circular"
+                        badgeContent={
+                            <NotificationsActiveIcon
+                                color="warning"
+                                sx={{
+                                    fontSize: '14px',
+                                    animation: 'pulse 1.5s infinite',
+                                    '@keyframes pulse': {
+                                        '0%': { opacity: 0.6 },
+                                        '50%': { opacity: 1 },
+                                        '100%': { opacity: 0.6 },
+                                    }
+                                }}
+                            />
+                        }
+                    >
+                        <WebhookIcon
+                            fontSize="small"
+                            color="warning"
+                        />
+                    </Badge>
+                ) : (
+                    <WebhookIcon
+                        fontSize="small"
+                        color={hasPayload ? "primary" : "inherit"}
+                    />
+                )}
 
                 {needsSave && (
                     <SaveIcon
@@ -219,7 +284,7 @@ function WebhookInputNode(props) {
                     />
                 )}
 
-                {isConfigured && !hasPayload && !showLoader && (
+                {isConfigured && !hasPayload && !showLoader && !isWaitingForData && (
                     <HourglassEmptyIcon
                         fontSize="small"
                         color="disabled"
@@ -236,13 +301,53 @@ function WebhookInputNode(props) {
                     />
                 )}
 
-                {((hasPayload && !showLoader) || props.data?.dataLoaded) && (
+                {((hasPayload && !showLoader && !isWaitingForData) || (props.data?.dataLoaded && !isWaitingForData)) && (
                     <CheckCircleIcon
                         fontSize="small"
                         color="success"
                         sx={{ ml: 0.5, fontSize: '16px' }}
                     />
                 )}
+
+                {/* Status chip */}
+                <Box sx={{ marginLeft: 'auto' }}>
+                    {isWaitingForData && (
+                        <Tooltip title="Waiting for webhook data to continue test run. Send data to the webhook URL in the configuration panel.">
+                            <Chip
+                                label="WAITING FOR DATA"
+                                size="small"
+                                color="warning"
+                                variant="outlined"
+                                sx={{
+                                    height: '18px',
+                                    fontSize: '0.65rem',
+                                    fontWeight: 'bold',
+                                    animation: 'pulseBg 2s infinite',
+                                    '@keyframes pulseBg': {
+                                        '0%': { backgroundColor: 'rgba(255, 152, 0, 0.1)' },
+                                        '50%': { backgroundColor: 'rgba(255, 152, 0, 0.3)' },
+                                        '100%': { backgroundColor: 'rgba(255, 152, 0, 0.1)' },
+                                    }
+                                }}
+                            />
+                        </Tooltip>
+                    )}
+                    {hasPayload && !isWaitingForData && (
+                        <Tooltip title={`Data received at ${updateTime ? new Date(updateTime).toLocaleTimeString() : 'unknown time'}`}>
+                            <Chip
+                                label="DATA RECEIVED"
+                                size="small"
+                                color="success"
+                                variant="outlined"
+                                sx={{
+                                    height: '18px',
+                                    fontSize: '0.65rem',
+                                    fontWeight: 'bold'
+                                }}
+                            />
+                        </Tooltip>
+                    )}
+                </Box>
             </Box>
         </BaseNode>
     );
