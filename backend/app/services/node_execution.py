@@ -566,3 +566,42 @@ async def test_llm_node(node_data: Dict[str, Any], workflow_nodes: List[Dict[str
             "error": error_msg,
             "model": model
         } 
+
+def execute_code_node(node_data: Dict[str, Any], input_data: Any) -> Any:
+    """Execute a code node with the given input data."""
+    code = node_data.get('code', '')
+    if not code:
+        logger.warning("Code node: No code provided. Passing input through.")
+        return input_data
+
+    try:
+        # Create a new namespace for execution
+        local_vars = {
+            'input_data': input_data,
+            'result': None
+        }
+        
+        # Execute the code in the isolated namespace
+        exec(code, {"__builtins__": __builtins__}, local_vars)
+        
+        # Get the result from the namespace
+        output_data = local_vars.get('result')
+        
+        # If no result was set, return the input data
+        if output_data is None:
+            logger.warning("Code node: No result variable set. Passing input through.")
+            return input_data
+            
+        return {
+            "status": "success",
+            "output": output_data,
+            "details": {
+                "code_executed": code[:100] + ('...' if len(code) > 100 else ''),
+                "input_type": type(input_data).__name__,
+                "output_type": type(output_data).__name__
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Code node execution error: {e}", exc_info=True)
+        raise ValueError(f"Code execution failed: {str(e)}") 
