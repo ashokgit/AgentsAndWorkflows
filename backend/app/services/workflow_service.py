@@ -350,6 +350,11 @@ async def execute_workflow_logic(workflow: Workflow, run_id: str, log_queue: asy
                             await log_and_store({"step": f"Test: Webhook Triggered: {node_label}", "node_id": current_node_definition.id, "status": "Triggered"})
                             logger.info(f"[TestRun {run_id}]: Webhook {current_node_definition.id} ({node_label}) received data.")
                             node_status = "Success" # Mark webhook trigger as successful for this step in test
+                            
+                            # Update the node's data with the test payload to reflect successful test
+                            current_node_definition.data['last_payload'] = current_data
+                            current_node_definition.data['dataLoaded'] = True
+                            logger.info(f"[TestRun {run_id}]: Updated webhook node {current_node_definition.id} with test data and set dataLoaded flag")
                         except asyncio.TimeoutError:
                             logger.warning(f"[TestRun {run_id}]: Timeout waiting for webhook {current_node_definition.id}")
                             node_status = "Failed"; node_error_detail = f"Test timed out after {webhook_timeout}s waiting for webhook data."
@@ -421,6 +426,27 @@ async def execute_workflow_logic(workflow: Workflow, run_id: str, log_queue: asy
     # If this was a test run, update the workflow's tested status based on overall_success
     if is_test:
         await set_workflow_tested_status(workflow_id, overall_success)
+        
+        # If test was successful, update the original workflow's webhook nodes with test data
+        if overall_success:
+            # Get the original workflow again to update it
+            original_workflow = workflows_db.get(workflow_id)
+            if original_workflow:
+                # Find webhook nodes that were updated during test
+                for node in current_workflow_nodes:
+                    if node.type == 'webhook_trigger' and node.data.get('dataLoaded') and node.data.get('last_payload'):
+                        # Find corresponding node in original workflow
+                        for orig_node in original_workflow.nodes:
+                            if orig_node.id == node.id:
+                                logger.info(f"[TestRun {run_id}]: Persisting webhook data from test to original workflow for node {node.id}")
+                                orig_node.data['last_payload'] = node.data['last_payload']
+                                orig_node.data['dataLoaded'] = True
+                                break
+                # Save the updated workflow
+                workflows_db[workflow_id] = original_workflow
+                save_workflows_to_disk()
+                logger.info(f"[TestRun {run_id}]: Updated original workflow with test webhook data")
+        
         # Clean up test-specific dictionaries for this run_id
         if run_id in webhook_test_events: del webhook_test_events[run_id]
         if run_id in webhook_test_data: del webhook_test_data[run_id]

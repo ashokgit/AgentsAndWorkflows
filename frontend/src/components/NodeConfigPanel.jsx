@@ -1444,7 +1444,7 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                 }}
                             >
                                 {formData.webhook_id ?
-                                    `${window.location.origin}/webhooks/${webhookId}` :
+                                    `${window.location.origin}${webhookId.startsWith('/') ? '' : '/'}${webhookId}` :
                                     'Save your workflow first to generate a webhook URL'
                                 }
                             </Typography>
@@ -1453,7 +1453,9 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                     <Button
                                         size="small"
                                         variant="outlined"
-                                        onClick={() => navigator.clipboard.writeText(`${window.location.origin}/webhooks/${webhookId}`)}
+                                        onClick={() => navigator.clipboard.writeText(
+                                            `${window.location.origin}${webhookId.startsWith('/') ? '' : '/'}${webhookId}`
+                                        )}
                                     >
                                         Copy URL
                                     </Button>
@@ -1461,7 +1463,9 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                         size="small"
                                         variant="outlined"
                                         color="info"
-                                        onClick={() => window.open(`${window.location.origin}/webhooks/${webhookId}`, '_blank')}
+                                        onClick={() => window.open(
+                                            `${window.location.origin}${webhookId.startsWith('/') ? '' : '/'}${webhookId}`, '_blank'
+                                        )}
                                     >
                                         Open in New Tab
                                     </Button>
@@ -1470,17 +1474,21 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                         variant="outlined"
                                         color="success"
                                         onClick={() => {
-                                            const curlCommand = `curl -X POST ${window.location.origin}/webhooks/${webhookId} \\
--H "Content-Type: application/json" \\
--d '{
-  "event": "test.event",
-  "data": {
-    "user_id": "12345",
-    "email": "test@example.com",
-    "name": "Test User"
-  },
-  "timestamp": "${new Date().toISOString()}"
-}'`;
+                                            // Ensure the webhook path is correct (should be /api/webhooks/...)
+                                            let webhookPath = '';
+                                            if (webhookId.includes('/api/webhooks/')) {
+                                                // Path is already correct
+                                                webhookPath = webhookId;
+                                            } else if (webhookId.startsWith('/')) {
+                                                // Path is missing the /api/webhooks/ prefix
+                                                webhookPath = `/api/webhooks/wh_${workflowId}_${node.id}`;
+                                            } else {
+                                                // UUID only case
+                                                webhookPath = `/api/webhooks/wh_${workflowId}_${node.id}`;
+                                            }
+
+                                            // Build the curl command on a single line with no line breaks
+                                            const curlCommand = `curl -X POST ${window.location.origin}${webhookPath} -H "Content-Type: application/json" -d '{"event":"test.event","data":{"user_id":"12345","email":"test@example.com","name":"Test User"},"timestamp":"${new Date().toISOString()}"}'`;
                                             navigator.clipboard.writeText(curlCommand);
                                             alert("Curl command copied to clipboard. Paste it in your terminal to test the webhook.");
                                         }}
@@ -1656,11 +1664,11 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                                         alert(`Webhook is registered (ID: ${formData.webhook_id}) but no data has been sent to it yet. Try sending data to this webhook URL first.`);
                                                     } else {
                                                         console.log("No webhook mappings found for this node");
-                                                        alert(`No webhook data found. Make sure to send data to this webhook URL: ${window.location.origin}/webhooks/${formData.webhook_id}`);
+                                                        alert(`No webhook data found. Make sure to send data to this webhook URL: ${window.location.origin}${formData.webhook_id.startsWith('/') ? '' : '/'}${formData.webhook_id}`);
                                                     }
                                                 } catch (debugError) {
                                                     console.error("Error fetching webhook debug data:", debugError);
-                                                    alert(`No webhook data found. Try sending data to this webhook URL: ${window.location.origin}/webhooks/${formData.webhook_id}`);
+                                                    alert(`No webhook data found. Try sending data to this webhook URL: ${window.location.origin}${formData.webhook_id.startsWith('/') ? '' : '/'}${formData.webhook_id}`);
                                                 }
                                             }
                                         } catch (error) {

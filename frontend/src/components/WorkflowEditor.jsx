@@ -522,94 +522,17 @@ function WorkflowEditor() {
 
             // If this is a webhook_trigger node, we need to register it to get a webhook ID
             if (nodeType === 'webhook_trigger') {
-                // Add a default webhook_name
+                // Assign a friendly name for the webhook node
                 newNode.data.webhook_name = `Webhook ${newNode.id}`;
 
-                if (!workflowId) {
-                    // Add the node but mark it as requiring registration
-                    setNodes((nds) => {
-                        // Create a proper copy to avoid reference issues
-                        const newNodes = [...nds];
-                        // Add node with needsRegistration flag in data
-                        newNodes.push({
-                            ...newNode,
-                            data: {
-                                ...newNode.data,
-                                needsRegistration: true,
-                                // No need to set label since BaseNode will use webhook_name
-                            }
-                        });
-                        return newNodes;
-                    });
-
-                    console.log("Added webhook node that needs workflow save for registration");
-                    return;
+                // If we already have a workflowId (i.e., the workflow has been saved before),
+                // we can deterministically build the webhook_id so the backend recognises it
+                if (workflowId) {
+                    newNode.data.webhook_id = `/api/webhooks/wh_${workflowId}_${newNode.id}`;
                 }
 
-                try {
-                    // Add the node first so it appears immediately
-                    setNodes((nds) => {
-                        // Create a proper copy to avoid reference issues
-                        const newNodes = [...nds];
-                        newNodes.push({
-                            ...newNode,
-                            data: {
-                                ...newNode.data,
-                                registering: true // Add a flag to show it's being registered
-                            }
-                        });
-                        return newNodes;
-                    });
-
-                    // Then register the webhook
-                    const response = await axios.post('/api/webhooks/register', {
-                        workflow_id: workflowId,
-                        node_id: newNode.id
-                    });
-
-                    const webhook_id = response.data.webhook_id;
-
-                    // Update the node with the webhook ID
-                    setNodes((nds) => {
-                        // Create a proper copy to avoid reference issues
-                        return nds.map((node) => {
-                            if (node.id === newNode.id) {
-                                return {
-                                    ...node,
-                                    data: {
-                                        ...node.data,
-                                        webhook_id: webhook_id,
-                                        registering: false
-                                    }
-                                };
-                            }
-                            return node;
-                        });
-                    });
-
-                    console.log(`Registered webhook ID ${webhook_id} for node ${newNode.id}`);
-                } catch (error) {
-                    console.error('Error registering webhook:', error);
-                    // Update the node to show registration failed
-                    setNodes((nds) => {
-                        return nds.map((node) => {
-                            if (node.id === newNode.id) {
-                                return {
-                                    ...node,
-                                    data: {
-                                        ...node.data,
-                                        registrationFailed: true,
-                                        registering: false,
-                                        // No need to set label since BaseNode will prioritize webhook_name
-                                    }
-                                };
-                            }
-                            return node;
-                        });
-                    });
-
-                    alert("Failed to register webhook. Please try saving the workflow again.");
-                }
+                // Simply add the node – no backend round-trip is required anymore
+                setNodes((nds) => [...nds, newNode]);
             } else {
                 // For non-webhook nodes, simply add the new node to the existing ones
                 setNodes((nds) => {
@@ -670,7 +593,18 @@ function WorkflowEditor() {
                 id: n.id,
                 type: n.type || 'default', // Ensure type is present
                 position: n.position,
-                data: n.data || { label: n.type }, // Add default data if missing
+                data: (() => {
+                    // Ensure webhook_trigger nodes always carry a deterministic webhook_id so the backend recognises them
+                    if (n.type === 'webhook_trigger') {
+                        const newData = { ...(n.data || {}) };
+                        if (!newData.webhook_id) {
+                            newData.webhook_id = `/api/webhooks/wh_${currentWorkflowId}_${n.id}`;
+                        }
+                        return newData;
+                    }
+                    // Non-webhook nodes – just return existing data or a fallback label
+                    return n.data || { label: n.type };
+                })(),
             })),
             edges: edges.map(e => ({
                 id: e.id,
@@ -688,6 +622,16 @@ function WorkflowEditor() {
             const response = await axios.post('/api/workflows', workflowData);
             alert(`Workflow saved successfully! ID: ${response.data.workflow_id}`);
             setWorkflowId(response.data.workflow_id); // Ensure ID is set after save
+
+            // Update local nodes with deterministic webhook_id now that we know the workflowId
+            setNodes(nds => nds.map(n => {
+                if (n.type === 'webhook_trigger') {
+                    const updatedData = { ...(n.data || {}) };
+                    updatedData.webhook_id = `/api/webhooks/wh_${response.data.workflow_id}_${n.id}`;
+                    return { ...n, data: updatedData };
+                }
+                return n;
+            }));
 
             // Refresh the workflow list to include the newly saved workflow
             await fetchWorkflows();
@@ -778,87 +722,27 @@ function WorkflowEditor() {
                     reactFlowInstance.fitView({ padding: 0.4, maxZoom: 0.8 });
                 }, 50);
 
-                // Check for webhook trigger nodes that need registering
-                const webhookTriggerNodes = loadedNodes.filter(node =>
-                    node.type === 'webhook_trigger' && (!node.data?.webhook_id || node.data?.needsRegistration)
-                );
+                // Ensure every webhook_trigger node has a deterministic webhook_id
+                const webhookTriggerNodes = loadedNodes.filter(node => node.type === 'webhook_trigger');
 
                 if (webhookTriggerNodes.length > 0) {
-                    console.log(`Registering webhooks for ${webhookTriggerNodes.length} webhook trigger nodes`);
-
-                    // Update nodes to show registration in progress
-                    setNodes(nds => {
-                        return nds.map(node => {
-                            if (webhookTriggerNodes.some(wn => wn.id === node.id)) {
-                                // Make sure the webhook has a name
-                                const webhookName = node.data?.webhook_name || `Webhook ${node.id}`;
-
-                                return {
-                                    ...node,
-                                    data: {
-                                        ...node.data,
-                                        webhook_name: webhookName, // Ensure webhook name is set
-                                        registering: true,
-                                        needsRegistration: false, // Clear the flag
-                                        // No need to set label since BaseNode will use webhook_name
-                                    }
-                                };
+                    setNodes(nds => nds.map(node => {
+                        if (webhookTriggerNodes.some(wn => wn.id === node.id)) {
+                            const updatedData = { ...(node.data || {}) };
+                            if (!updatedData.webhook_id) {
+                                updatedData.webhook_id = `/api/webhooks/wh_${workflowIdToLoad}_${node.id}`;
                             }
-                            return node;
-                        });
-                    });
+                            if (!updatedData.webhook_name) {
+                                updatedData.webhook_name = `Webhook ${node.id}`;
+                            }
+                            // Clean legacy flags
+                            delete updatedData.needsRegistration;
+                            delete updatedData.registering;
 
-                    // Register webhooks for each node that needs one
-                    for (const node of webhookTriggerNodes) {
-                        try {
-                            const response = await axios.post('/api/webhooks/register', {
-                                workflow_id: workflowIdToLoad,
-                                node_id: node.id
-                            });
-
-                            const webhook_id = response.data.webhook_id;
-
-                            // Update the node with the webhook ID
-                            setNodes(nds => {
-                                return nds.map(n => {
-                                    if (n.id === node.id) {
-                                        return {
-                                            ...n,
-                                            data: {
-                                                ...n.data,
-                                                webhook_id: webhook_id,
-                                                registering: false,
-                                                registrationFailed: false
-                                            }
-                                        };
-                                    }
-                                    return n;
-                                });
-                            });
-
-                            console.log(`Registered webhook ID ${webhook_id} for node ${node.id}`);
-                        } catch (error) {
-                            console.error(`Error registering webhook for node ${node.id}:`, error);
-
-                            // Update the node to show registration failed
-                            setNodes(nds => {
-                                return nds.map(n => {
-                                    if (n.id === node.id) {
-                                        return {
-                                            ...n,
-                                            data: {
-                                                ...n.data,
-                                                registering: false,
-                                                registrationFailed: true,
-                                                // No need to set label since BaseNode will prioritize webhook_name
-                                            }
-                                        };
-                                    }
-                                    return n;
-                                });
-                            });
+                            return { ...node, data: updatedData };
                         }
-                    }
+                        return node;
+                    }));
                 }
             } else {
                 console.error("No workflow data returned");

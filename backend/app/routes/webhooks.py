@@ -97,6 +97,8 @@ async def debug_webhooks():
     return {
         "webhook_registry": webhook_registry,
         "webhook_payloads": webhook_payloads,
+        "webhook_mappings": webhook_mapping,  # Added for frontend compatibility with legacy code
+        "webhook_mapping": webhook_mapping,   # Alias for completeness
         "active_webhooks_expecting_test_data": active_webhooks_expecting_test_data
     }
 
@@ -105,15 +107,60 @@ async def debug_webhooks():
 # e.g., if POST to /api/webhooks/wh_wf1_node1, webhook_specific_path will be "wh_wf1_node1"
 @router.api_route("/{webhook_specific_path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def handle_webhook_callback(webhook_specific_path: str, request: Request, background_tasks: BackgroundTasks):
-    """Handle incoming webhook callbacks for a dynamically registered path."""
-    full_path_identifier = f"/api/webhooks/{webhook_specific_path}" # Reconstruct the key used in registry
-    
+    """Handle incoming webhook callbacks for a dynamically registered path.
+    If the path was not explicitly registered beforehand, attempt to derive the
+    workflow_id and node_id from the path pattern (wh_{workflow_id}_{node_id})
+    and auto-register it on-the-fly so that explicit registration becomes optional.
+    """
+    full_path_identifier = f"/api/webhooks/{webhook_specific_path}"  # Reconstruct the key used in registry
+
     logger.info(f"Webhook callback received for path: {full_path_identifier}, Method: {request.method}")
 
+    # ---------------------------------------------------------------
+    # Dynamic auto-registration logic (makes manual registration optional)
+    # ---------------------------------------------------------------
     if full_path_identifier not in webhook_registry:
-        logger.warning(f"Webhook path {full_path_identifier} not found in registry. Current registry: {webhook_registry}")
-        raise HTTPException(status_code=404, detail=f"Webhook path {full_path_identifier} not registered")
-    
+        logger.debug(f"Webhook path {full_path_identifier} not found in registry. Attempting dynamic discovery.")
+
+        derived_workflow_id: Optional[str] = None
+        derived_node_id: Optional[str] = None
+
+        # Try to match by iterating over existing workflows and checking prefix
+        for wf_id, wf in workflows_db.items():
+            prefix = f"wh_{wf_id}_"
+            if webhook_specific_path.startswith(prefix):
+                # Everything after the prefix is treated as the node_id
+                derived_node_id = webhook_specific_path[len(prefix):]
+                derived_workflow_id = wf_id
+                # Validate that this node actually exists and is a webhook type
+                matching_nodes = [n for n in wf.nodes if n.id == derived_node_id and n.type in ["webhook_trigger", "webhook"]]
+                if matching_nodes:
+                    break  # Found a valid mapping
+                else:
+                    derived_workflow_id = None  # Reset if validation fails
+
+        if derived_workflow_id and derived_node_id:
+            logger.info(f"Dynamically registering webhook path {full_path_identifier} for workflow {derived_workflow_id}, node {derived_node_id}")
+            # Use the path itself as the primary key (no separate UUID needed)
+            webhook_registry[full_path_identifier] = {
+                "workflow_id": derived_workflow_id,
+                "node_id": derived_node_id,
+                "webhook_id": full_path_identifier  # For backward compatibility
+            }
+            webhook_mapping[full_path_identifier] = {
+                "workflow_id": derived_workflow_id,
+                "node_id": derived_node_id,
+                "internal_path": full_path_identifier
+            }
+            # Ensure payloads list exists
+            webhook_payloads.setdefault(full_path_identifier, [])
+            # Persist to disk asynchronously (blocking call is fine for now)
+            save_webhooks_to_disk()
+        else:
+            logger.warning(f"Could not dynamically resolve webhook path {full_path_identifier}.")
+            raise HTTPException(status_code=404, detail=f"Webhook path {full_path_identifier} not recognized and could not be auto-registered.")
+
+    # From this point we are guaranteed to have the path in the registry
     reg_info = webhook_registry[full_path_identifier]
     workflow_id = reg_info["workflow_id"]
     node_id = reg_info["node_id"]
