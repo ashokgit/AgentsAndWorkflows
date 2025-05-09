@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 # Needs persistent queue (Redis Pub/Sub, etc.) for production.
 stream_queues: Dict[str, asyncio.Queue] = {}
 
+# Helper function to ensure consistent webhook path formatting
+def format_webhook_path(workflow_id: str, node_id: str) -> str:
+    """Create a consistent webhook path format used by both registering and receiving webhooks."""
+    return f"/api/webhooks/wh_{workflow_id}_{node_id}"
+
 # Structures for handling webhook data during tests
 # webhook_test_events: {run_id: {node_id: asyncio.Event}}
 webhook_test_events: Dict[str, Dict[str, asyncio.Event]] = {}
@@ -170,24 +175,49 @@ async def set_workflow_tested_status(workflow_id: str, success: bool):
 
 async def signal_webhook_data_for_test(webhook_path: str, node_id: str, data: Any):
     """Signal that a webhook (identified by its unique path) has received data during a test run."""
+    logger.info(f"[TestSignal] Attempting to signal for webhook_path={webhook_path}, node_id={node_id}")
+    logger.info(f"[TestSignal] Active webhooks expecting data: {list(active_webhooks_expecting_test_data.keys())}")
+    
     run_id = active_webhooks_expecting_test_data.get(webhook_path)
     if not run_id:
         logger.warning(f"[TestSignal {webhook_path}]: No active test run found waiting on this webhook path.")
         return False
 
-    if run_id not in webhook_test_events or node_id not in webhook_test_events[run_id]:
+    # Try to handle parsing mismatches by attempting multiple node ID formats
+    found_node_id = None
+    if run_id in webhook_test_events:
+        # First try the exact node_id provided
+        if node_id in webhook_test_events[run_id]:
+            found_node_id = node_id
+        else:
+            # Try to match ignoring underscores
+            node_id_without_underscores = node_id.replace("_", "")
+            for test_node_id in webhook_test_events[run_id].keys():
+                test_node_id_without_underscores = test_node_id.replace("_", "")
+                if node_id_without_underscores == test_node_id_without_underscores:
+                    found_node_id = test_node_id
+                    logger.info(f"[TestSignal] Found matching node_id={test_node_id} for provided={node_id}")
+                    break
+                # Handle cases where digits are at the end (e.g., dndnode_4 vs 4)
+                elif node_id.isdigit() and test_node_id.endswith(f"_{node_id}"):
+                    found_node_id = test_node_id
+                    logger.info(f"[TestSignal] Found node_id={test_node_id} matching digit-only suffix={node_id}")
+                    break
+                    
+    if not found_node_id:
         logger.warning(f"[TestSignal {run_id}-{node_id}]: No waiting test event found for this node_id in this run.")
+        logger.info(f"[TestSignal] Available node_ids for run {run_id}: {list(webhook_test_events.get(run_id, {}).keys())}")
         return False
     
-    webhook_test_data.setdefault(run_id, {})[node_id] = data
-    event = webhook_test_events[run_id][node_id]
+    webhook_test_data.setdefault(run_id, {})[found_node_id] = data
+    event = webhook_test_events[run_id][found_node_id]
     event.set() # Signal the waiting execute_workflow_logic task
-    logger.info(f"[TestSignal {run_id}-{node_id}]: Signaled webhook data received for path {webhook_path}.")
+    logger.info(f"[TestSignal {run_id}-{found_node_id}]: Signaled webhook data received for path {webhook_path}.")
     
     # Important: Remove from active_webhooks_expecting_test_data once signaled to prevent re-triggering for the same test wait
     if webhook_path in active_webhooks_expecting_test_data:
         del active_webhooks_expecting_test_data[webhook_path]
-        logger.info(f"[TestSignal {run_id}-{node_id}]: Removed {webhook_path} from active test waiters.")
+        logger.info(f"[TestSignal {run_id}-{found_node_id}]: Removed {webhook_path} from active test waiters.")
     return True
 
 async def execute_workflow_logic(workflow: Workflow, run_id: str, log_queue: asyncio.Queue, 
@@ -331,7 +361,9 @@ async def execute_workflow_logic(workflow: Workflow, run_id: str, log_queue: asy
 
                 try:
                     if is_test and current_node_definition.type in ['webhook_trigger', 'webhook']:
-                        webhook_node_path_key = f"/api/webhooks/wh_{workflow_id}_{current_node_definition.id}" # Construct the key used in webhook_registry
+                        # Use helper to ensure consistent path format
+                        webhook_node_path_key = format_webhook_path(workflow_id, current_node_definition.id)
+                        logger.info(f"[TestRun {run_id}] Registering webhook wait path: {webhook_node_path_key}")
                         webhook_event = asyncio.Event()
                         webhook_test_events.setdefault(run_id, {})[current_node_definition.id] = webhook_event
                         active_webhooks_expecting_test_data[webhook_node_path_key] = run_id
@@ -474,3 +506,40 @@ async def execute_workflow_logic(workflow: Workflow, run_id: str, log_queue: asy
             del stream_queues[run_id]
             
         logger.info(f"[Run {run_id} {'[TEST]' if is_test else ''}]: Background task finished.") 
+
+# --- Helper: Send Webhook Data to a Specific Node ---
+# This is a simplified implementation to bridge webhook callbacks to workflows.
+# In test runs, it will signal the waiting event. In normal operation, it will
+# start a new run of the workflow using the payload as initial input.
+
+async def send_webhook_data_to_node(workflow_id: str, node_id: str, payload: Any):
+    """Send data from an external webhook callback to a specific node.
+
+    If the workflow is currently running in *test* mode and waiting for this
+    webhook, the function will signal the waiting coroutine so that execution
+    can continue. Otherwise, it will trigger a brand-new workflow run using the
+    provided payload as `input_data`. This is a pragmatic approach that ensures
+    production webhooks can still launch workflows even if no run is actively
+    waiting for them.
+    """
+
+    try:
+        # First: attempt to signal an active *test* workflow, if any.
+        # Use helper to ensure consistent path format
+        webhook_path_key = format_webhook_path(workflow_id, node_id)
+        logger.info(f"[WebhookBridge] Checking for test run with path: {webhook_path_key}")
+        signalled = await signal_webhook_data_for_test(webhook_path_key, node_id, payload)
+        if signalled:
+            logger.info(f"[WebhookBridge] Signalled waiting test run for {workflow_id}:{node_id}.")
+            return True
+
+        # No test run waiting – start a new *normal* workflow run so that the
+        # payload is processed. In future, this could resume an existing run
+        # instead of always starting a new one, but that orchestration logic is
+        # beyond the current scope.
+        await run_workflow(workflow_id, input_data=payload, is_test_run=False)
+        logger.info(f"[WebhookBridge] Started new workflow run for {workflow_id} with incoming webhook data.")
+        return True
+    except Exception as exc:
+        logger.error(f"[WebhookBridge] Failed to route webhook data to workflow {workflow_id}/{node_id}: {exc}", exc_info=True)
+        return False 

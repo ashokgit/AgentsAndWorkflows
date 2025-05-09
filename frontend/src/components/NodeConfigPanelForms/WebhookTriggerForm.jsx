@@ -23,6 +23,10 @@ const WebhookTriggerForm = ({
 }) => {
 
     const webhookId = formData.webhook_id || 'Generating...';
+    const workflowIdForPath = workflowId || formData.workflow_id || '';
+    const computedWebhookPath = webhookId.includes('/api/webhooks/')
+        ? webhookId
+        : `/api/webhooks/wh_${workflowIdForPath}_${node.id}`;
     const hasWebhookData = !!formData.last_payload;
     const needsWorkflowSave = !formData.webhook_id && !workflowId;
 
@@ -169,7 +173,7 @@ const WebhookTriggerForm = ({
                     }}
                 >
                     {formData.webhook_id ?
-                        `${window.location.origin}${webhookId.startsWith('/') ? '' : '/'}${webhookId}` :
+                        `${window.location.origin}${computedWebhookPath.startsWith('/') ? '' : '/'}${computedWebhookPath}` :
                         'Save your workflow first to generate a webhook URL'
                     }
                 </Typography>
@@ -179,7 +183,7 @@ const WebhookTriggerForm = ({
                             size="small"
                             variant="outlined"
                             onClick={() => navigator.clipboard.writeText(
-                                `${window.location.origin}${webhookId.startsWith('/') ? '' : '/'}${webhookId}`
+                                `${window.location.origin}${computedWebhookPath.startsWith('/') ? '' : '/'}${computedWebhookPath}`
                             )}
                         >
                             Copy URL
@@ -189,7 +193,7 @@ const WebhookTriggerForm = ({
                             variant="outlined"
                             color="info"
                             onClick={() => window.open(
-                                `${window.location.origin}${webhookId.startsWith('/') ? '' : '/'}${webhookId}`, '_blank'
+                                `${window.location.origin}${computedWebhookPath.startsWith('/') ? '' : '/'}${computedWebhookPath}`, '_blank'
                             )}
                         >
                             Open in New Tab
@@ -199,14 +203,7 @@ const WebhookTriggerForm = ({
                             variant="outlined"
                             color="success"
                             onClick={() => {
-                                let webhookPath = '';
-                                if (webhookId.includes('/api/webhooks/')) {
-                                    webhookPath = webhookId;
-                                } else if (webhookId.startsWith('/')) {
-                                    webhookPath = `/api/webhooks/wh_${workflowId}_${node.id}`;
-                                } else {
-                                    webhookPath = `/api/webhooks/wh_${workflowId}_${node.id}`;
-                                }
+                                const webhookPath = computedWebhookPath;
                                 const curlCommand = `curl -X POST ${window.location.origin}${webhookPath} -H "Content-Type: application/json" -d '{ "event":"test.event","data":{"user_id":"12345","email":"test@example.com","name":"Test User"},"timestamp":"${new Date().toISOString()}"}'`;
                                 navigator.clipboard.writeText(curlCommand);
                                 alert("Curl command copied to clipboard. Paste it in your terminal to test the webhook.");

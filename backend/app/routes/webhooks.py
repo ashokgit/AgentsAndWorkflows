@@ -10,6 +10,7 @@ from datetime import datetime
 from app.models.workflow import WebhookRegistration
 from app.utils.persistence import webhook_payloads, webhook_registry, webhook_mapping, workflows_db, save_webhooks_to_disk
 from app.services.workflow_service import run_workflow, signal_webhook_data_for_test, active_webhooks_expecting_test_data
+import app.services.workflow_service as workflow_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
@@ -173,42 +174,60 @@ async def handle_webhook_callback(
         # This could be extended to store logs or send them to websockets in the future
         return log_entry
 
-    # Check if this webhook is an active trigger that's expecting test data
-    is_test_data = False
-    matching_test_nodes = []
-    
-    for node_id, info in active_webhooks_expecting_test_data.items():
-        # Format is: /api/webhooks/wh_{workflow_id}_{node_id}
-        expected_path = f"wh_{info['workflow_id']}_{node_id}"
-        if webhook_specific_path == expected_path:
-            matching_test_nodes.append((node_id, info))
-            is_test_data = True
+    # --- Handle Webhook Data Expected During a Test Run ---
+    incoming_full_path = f"/api/webhooks/{webhook_specific_path}"
+
+    if incoming_full_path in active_webhooks_expecting_test_data:
+        # The workflow test runner is waiting for this webhook data
+        run_id = active_webhooks_expecting_test_data[incoming_full_path]
+
+        # Extract workflow_id and node_id from the path. Format: wh_<workflow_id>_<node_id>
+        workflow_id = None
+        node_id = None
+        if webhook_specific_path.startswith("wh_"):
+            # First, find where the node_id begins (look for "dndnode_" pattern)
+            remainder = webhook_specific_path[3:]  # Remove 'wh_' prefix
+            dndnode_index = remainder.find("dndnode_")
             
-    if is_test_data and matching_test_nodes:
-        logger.info(f"This is test data for active webhook(s): {matching_test_nodes}")
-        # For each matching node in test mode, use background task to send the payload
-        for node_id, info in matching_test_nodes:
-            workflow_id = info["workflow_id"]
-            logger.info(f"Sending test data to workflow {workflow_id}, node {node_id}")
-            background_tasks.add_task(
-                workflow_service.send_webhook_data_to_node,
-                workflow_id=workflow_id,
-                node_id=node_id,
-                payload=payload
-            )
-            # Log success message for UI clarity
-            log_webhook_event(
-                webhook_id=f"/api/webhooks/{webhook_specific_path}",
-                workflow_id=workflow_id,
-                node_id=node_id,
-                message=f"Test data received for webhook node. Continuing workflow execution.",
-                status="Success"
-            )
-            
-            # Remove from active waiting list
-            if node_id in active_webhooks_expecting_test_data:
-                del active_webhooks_expecting_test_data[node_id]
-                
+            if dndnode_index >= 0:
+                # If we found the pattern, split at that position
+                workflow_id = remainder[:dndnode_index-1] if dndnode_index > 0 else None
+                node_id = remainder[dndnode_index:]
+            else:
+                # Fallback: Just take the last component as node_id
+                # This might not be accurate but is better than nothing
+                parts = remainder.split("_")
+                if len(parts) >= 2:
+                    workflow_id = "_".join(parts[:-1])
+                    node_id = parts[-1]
+                    # Check if this looks wrong (node_id is numeric) and try to fix
+                    if node_id.isdigit() and "dndnode" in workflow_id:
+                        # Attempt a better split - find the last occurrence of "dndnode"
+                        last_dndnode = workflow_id.rfind("dndnode")
+                        if last_dndnode >= 0:
+                            # Reconstruct the node_id properly
+                            node_id = f"{workflow_id[last_dndnode:]}_{node_id}"
+                            workflow_id = workflow_id[:last_dndnode-1] if last_dndnode > 0 else None
+
+        logger.info(f"[TestWebhook] Data received for run {run_id}. Workflow: {workflow_id}, Node: {node_id}")
+
+        # Signal the workflow service asynchronously so the paused test run can resume
+        background_tasks.add_task(
+            signal_webhook_data_for_test,
+            webhook_path=incoming_full_path,
+            node_id=node_id,
+            data=payload
+        )
+
+        # Optional: structured log for UI or future websocket notifications
+        log_webhook_event(
+            webhook_id=incoming_full_path,
+            workflow_id=workflow_id,
+            node_id=node_id,
+            message="Test data received for webhook node. Continuing workflow execution.",
+            status="Success"
+        )
+
         return {
             "success": True,
             "message": "✅ Webhook test data received",
@@ -231,10 +250,33 @@ async def handle_webhook_callback(
     # This approach allows clients to use deterministic webhook URLs without explicit registration
     if not matched_webhook and webhook_specific_path.startswith("wh_"):
         try:
-            parts = webhook_specific_path.split("_", 2)
-            if len(parts) == 3:
-                workflow_id = parts[1]
-                node_id = parts[2]
+            # Extract parts after the wh_ prefix
+            remainder = webhook_specific_path[3:]  # Remove 'wh_' prefix
+            
+            # Handle the case where workflow_id includes the 'wf_' prefix 
+            if '_' in remainder:
+                # Find the position of the last underscore to extract node_id
+                last_underscore_pos = remainder.rfind('_')
+                if last_underscore_pos > 0:  # Ensure there's text before the underscore
+                    workflow_id = remainder[:last_underscore_pos]
+                    node_id = remainder[last_underscore_pos+1:]
+                    logger.info(f"Auto-registration parsed: workflow_id={workflow_id}, node_id={node_id}")
+                
+                # Double-check for common parsing errors
+                if node_id.isdigit() and '_' in workflow_id:
+                    # It's likely that workflow_id incorrectly includes part of the node_id
+                    # Try to fix it - assume the last component after '_' is the node_id
+                    try:
+                        components = workflow_id.split('_')
+                        # If the workflow format is "wf_123456_dndnode", then extract properly
+                        if len(components) >= 3 and components[-1].startswith('dndnode'):
+                            fixed_node_id = f"{components[-1]}_{node_id}"
+                            fixed_workflow_id = "_".join(components[:-1])
+                            logger.info(f"Fixed parsing: workflow_id={fixed_workflow_id}, node_id={fixed_node_id}")
+                            workflow_id = fixed_workflow_id
+                            node_id = fixed_node_id
+                    except Exception as parse_fix_error:
+                        logger.error(f"Error fixing webhook parsing: {parse_fix_error}")
                 
                 # Create a mapping for this webhook path
                 webhook_mapping[webhook_specific_path] = {
