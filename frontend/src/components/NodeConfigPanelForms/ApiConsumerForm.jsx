@@ -121,7 +121,7 @@ const ApiConsumerForm = ({
 
     return (
         <>
-            <NodeInputSelector node={{ data: formData, type: 'api_consumer', id: node.id }} nodes={nodes} edges={edges} />
+            <NodeInputSelector node={node} nodes={nodes} edges={edges} />
 
             <TextField
                 label="Name"

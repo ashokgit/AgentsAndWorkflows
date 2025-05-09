@@ -5,6 +5,7 @@ import FormHelperText from '@mui/material/FormHelperText';
 // Assuming NodeInputSelector and DraggableTextField are passed as props
 
 const CodeForm = ({
+    node,
     formData,
     nodes,
     edges, // Needed for NodeInputSelector
@@ -16,7 +17,7 @@ const CodeForm = ({
 }) => {
     return (
         <>
-            <NodeInputSelector node={{ data: formData, type: 'code', id: formData.id }} nodes={nodes} edges={edges} />
+            <NodeInputSelector node={node} nodes={nodes} edges={edges} />
 
             <TextField
                 label="Name"

@@ -15,6 +15,7 @@ import FormHelperText from '@mui/material/FormHelperText';
 // or imported directly if they are in accessible paths. For now, let's assume they are passed.
 
 const LLMForm = ({
+    node,
     formData,
     nodes,
     edges,
@@ -44,7 +45,7 @@ const LLMForm = ({
 
     return (
         <>
-            <NodeInputSelector node={{ data: formData, type: 'llm', id: formData.id /* Ensure node has id if needed by selector */ }} nodes={nodes} edges={edges} />
+            <NodeInputSelector node={node} nodes={nodes} edges={edges} />
 
             <TextField
                 label="Name"
