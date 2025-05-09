@@ -42,6 +42,9 @@ const LogEntryBox = styled(Box, {
     padding: isTestLog ? theme.spacing(0.5, 1) : 0,
     position: 'relative',
     overflow: 'hidden', // Needed for the test indicator
+    '&:hover': {
+        backgroundColor: 'rgba(0, 0, 0, 0.02)',
+    },
     // Add a subtle indicator for test logs
     ...(isTestLog && {
         '&::before': {
@@ -187,6 +190,23 @@ function LogDisplay({ logs }) {
 
                 return (
                     <LogEntryBox key={`${log.run_id || 'init'}-${index}-${log.timestamp}`} isTestLog={isTest}>
+                        {hasDetails && (
+                            <Box
+                                sx={{
+                                    position: 'absolute',
+                                    right: '8px',
+                                    top: '8px',
+                                    color: 'primary.light',
+                                    display: isExpanded ? 'none' : 'block',
+                                    zIndex: 1,
+                                    opacity: 0.7
+                                }}
+                            >
+                                <Tooltip title="Click to see details">
+                                    <ExpandMoreIcon fontSize="small" />
+                                </Tooltip>
+                            </Box>
+                        )}
                         <Accordion
                             expanded={isExpanded}
                             onChange={handleExpandChange(index)}
@@ -195,7 +215,11 @@ function LogDisplay({ logs }) {
                             sx={{
                                 backgroundColor: 'transparent',
                                 '&::before': { display: 'none' }, // Remove Accordion default border
-                                border: 'none'
+                                border: 'none',
+                                '&:hover': {
+                                    backgroundColor: hasDetails ? 'rgba(0, 0, 0, 0.03)' : 'transparent',
+                                    transition: 'background-color 0.2s ease',
+                                }
                             }}
                         >
                             <AccordionSummary
@@ -211,6 +235,10 @@ function LogDisplay({ logs }) {
                                     },
                                     // Disable expansion if no details
                                     cursor: hasDetails ? 'pointer' : 'default',
+                                    pointerEvents: hasDetails ? 'auto' : 'none',
+                                    '& .MuiAccordionSummary-expandIconWrapper': {
+                                        color: hasDetails ? 'primary.main' : 'transparent',
+                                    }
                                 }}
                             >
                                 <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1, overflow: 'hidden' }}>
@@ -259,15 +287,22 @@ function LogDisplay({ logs }) {
                                 </Box>
                             </AccordionSummary>
                             {hasDetails && (
-                                <AccordionDetails sx={{ pt: 0, pb: 1, px: 1 }}>
-                                    {log.message && (
-                                        <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'text.secondary', mb: 1 }}>
-                                            {log.message}
-                                        </Typography>
-                                    )}
-                                    {renderDataSection("Error Details", log.error, true)}
-                                    {renderDataSection("Input Data", log.input_data_summary || log.input_data)}
-                                    {renderDataSection("Output Data", log.output_data_summary || log.output_data)}
+                                <AccordionDetails
+                                    sx={{
+                                        padding: 1,
+                                        paddingTop: 0,
+                                        backgroundColor: 'rgba(0, 0, 0, 0.02)',
+                                        borderRadius: '0 0 4px 4px',
+                                        marginTop: '4px'
+                                    }}
+                                >
+                                    {log.error && renderDataSection("Error", log.error, true)}
+                                    {log.message && renderDataSection("Message", log.message)}
+                                    {log.input_data_summary && renderDataSection("Input Data", log.input_data_summary)}
+                                    {log.output_data_summary && renderDataSection("Output Data", log.output_data_summary)}
+                                    {/* If we have full data and no summary, show the full data */}
+                                    {!log.input_data_summary && log.input_data && renderDataSection("Input Data", log.input_data)}
+                                    {!log.output_data_summary && log.output_data && renderDataSection("Output Data", log.output_data)}
                                 </AccordionDetails>
                             )}
                         </Accordion>

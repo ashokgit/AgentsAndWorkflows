@@ -47,6 +47,17 @@ import Alert from '@mui/material/Alert';
 import LinearProgress from '@mui/material/LinearProgress';
 import Snackbar from '@mui/material/Snackbar';
 import MuiAlert from '@mui/material/Alert';
+import IconButton from '@mui/material/IconButton';
+import Tabs from '@mui/material/Tabs';
+import Tab from '@mui/material/Tab';
+import SaveIcon from '@mui/icons-material/Save';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import ScienceIcon from '@mui/icons-material/Science';
+import HistoryIcon from '@mui/icons-material/History';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import { styled } from '@mui/material/styles';
 
 // MUI Icons
 import InputIcon from '@mui/icons-material/Input';
@@ -55,21 +66,16 @@ import SmartToyIcon from '@mui/icons-material/SmartToy'; // LLM
 import CodeIcon from '@mui/icons-material/Code';
 import SendIcon from '@mui/icons-material/Send'; // Webhook Action
 import WebhookIcon from '@mui/icons-material/Webhook'; // Webhook Trigger
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import SaveIcon from '@mui/icons-material/Save';
-import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import AccountTreeIcon from '@mui/icons-material/AccountTree'; // Icon for App Title
 import SettingsIcon from '@mui/icons-material/Settings';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import ApiIcon from '@mui/icons-material/Api'; // API Consumer Icon
-import FitScreenIcon from '@mui/icons-material/FitScreen'; // Fit View Icon
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import InputOutlinedIcon from '@mui/icons-material/InputOutlined'; // For Inputs & Triggers
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'; // For Configuration
 import LoopOutlinedIcon from '@mui/icons-material/LoopOutlined'; // For Processing
 import PublishOutlinedIcon from '@mui/icons-material/PublishOutlined'; // For External Actions
-import ScienceIcon from '@mui/icons-material/Science'; // Test icon
+import ArrowBackIcon from '@mui/icons-material/ArrowBack'; // For back button
 
 // Custom Node Components
 import DefaultNode from './nodes/DefaultNode';
@@ -82,7 +88,12 @@ import ModelConfigNode from './nodes/ModelConfigNode';
 import ApiConsumerNode from './nodes/ApiConsumerNode';
 
 const drawerWidth = 240;
-const logPanelHeight = 200;
+// const logPanelHeight = 200;
+
+// Constants
+const MIN_LOG_PANEL_HEIGHT = 100;
+const MAX_LOG_PANEL_HEIGHT = 500;
+const DEFAULT_LOG_PANEL_HEIGHT = 200;
 
 // Helper function to get icon based on node type (for palette)
 const getNodeIcon = (nodeType) => {
@@ -335,6 +346,16 @@ function WorkflowEditor() {
         webhookId: '',
         runId: null
     });
+
+    const [logPanelHeight, setLogPanelHeight] = useState(DEFAULT_LOG_PANEL_HEIGHT);
+    const [isDraggingLogPanel, setIsDraggingLogPanel] = useState(false);
+    const [logTabValue, setLogTabValue] = useState(0);
+    const [historyLogs, setHistoryLogs] = useState([]);
+    const [selectedRunId, setSelectedRunId] = useState(null);
+    const [selectedRunDetails, setSelectedRunDetails] = useState(null);
+    const [isLoadingHistoryLogs, setIsLoadingHistoryLogs] = useState(false);
+    const dragStartY = useRef(0);
+    const dragStartHeight = useRef(0);
 
     // Toggle category expansion
     const toggleCategory = (category) => {
@@ -1503,6 +1524,209 @@ function WorkflowEditor() {
         }
     };
 
+    // Handle log panel resize
+    const handleLogPanelDragStart = (e) => {
+        e.preventDefault();
+        setIsDraggingLogPanel(true);
+        dragStartY.current = e.clientY;
+        dragStartHeight.current = logPanelHeight;
+
+        // Add event listeners for drag and release
+        document.addEventListener('mousemove', handleLogPanelDrag);
+        document.addEventListener('mouseup', handleLogPanelDragEnd);
+    };
+
+    const handleLogPanelDrag = useCallback((e) => {
+        if (!isDraggingLogPanel) return;
+
+        const deltaY = dragStartY.current - e.clientY;
+        const newHeight = Math.max(
+            MIN_LOG_PANEL_HEIGHT,
+            Math.min(MAX_LOG_PANEL_HEIGHT, dragStartHeight.current + deltaY)
+        );
+
+        setLogPanelHeight(newHeight);
+    }, [isDraggingLogPanel]);
+
+    const handleLogPanelDragEnd = useCallback(() => {
+        setIsDraggingLogPanel(false);
+        document.removeEventListener('mousemove', handleLogPanelDrag);
+        document.removeEventListener('mouseup', handleLogPanelDragEnd);
+    }, [handleLogPanelDrag]);
+
+    // Clean up event listeners on unmount
+    useEffect(() => {
+        return () => {
+            document.removeEventListener('mousemove', handleLogPanelDrag);
+            document.removeEventListener('mouseup', handleLogPanelDragEnd);
+        };
+    }, [handleLogPanelDrag, handleLogPanelDragEnd]);
+
+    // Handle log tab change
+    const handleLogTabChange = (event, newValue) => {
+        setLogTabValue(newValue);
+
+        // Reset selected run when switching tabs
+        setSelectedRunDetails(null);
+
+        // If switching to history tab, fetch the run history
+        if (newValue === 1 && workflowId) {
+            fetchRunHistory();
+        }
+    };
+
+    // Fetch run history logs
+    const fetchRunHistory = async () => {
+        if (!workflowId) return;
+
+        setIsLoadingHistoryLogs(true);
+        try {
+            const response = await axios.get(`/api/workflows/${workflowId}/runs`, {
+                params: {
+                    limit: 20,
+                    include_archived: true
+                }
+            });
+
+            setHistoryLogs(response.data || []);
+        } catch (error) {
+            console.error("Error fetching run history:", error);
+            setHistoryLogs([]);
+        } finally {
+            setIsLoadingHistoryLogs(false);
+        }
+    };
+
+    // Fetch specific run details
+    const fetchRunDetails = async (runId) => {
+        if (!workflowId || !runId) return;
+
+        try {
+            const response = await axios.get(`/api/workflows/${workflowId}/runs/${runId}`);
+            if (response.data) {
+                setSelectedRunId(runId);
+                // Store the run details separately instead of setting to runLogs
+                setSelectedRunDetails(response.data);
+            }
+        } catch (error) {
+            console.error(`Error fetching details for run ${runId}:`, error);
+        }
+    };
+
+    // Add refresh button handler
+    const handleRefreshLogs = () => {
+        if (logTabValue === 0) {
+            // For live logs, just clear them to show most recent logs only
+            setRunLogs([]);
+        } else {
+            // For history logs, fetch the latest history
+            fetchRunHistory();
+        }
+    };
+
+    // Render history log items
+    const renderHistoryLogs = () => {
+        if (isLoadingHistoryLogs) {
+            return (
+                <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+                    <LinearProgress sx={{ width: '50%' }} />
+                </Box>
+            );
+        }
+
+        if (!historyLogs || historyLogs.length === 0) {
+            return (
+                <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body2" color="text.secondary">
+                        No run history available.
+                    </Typography>
+                </Box>
+            );
+        }
+
+        // If we have a selected run with details, show its logs
+        if (selectedRunDetails) {
+            return (
+                <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                    <Box sx={{ p: 1, mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Button
+                            size="small"
+                            startIcon={<ArrowBackIcon />}
+                            onClick={() => setSelectedRunDetails(null)}
+                        >
+                            Back to history
+                        </Button>
+                        <Typography variant="subtitle2">
+                            Run Details: {selectedRunId?.substring(0, 8)}...
+                        </Typography>
+                    </Box>
+                    <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+                        <LogDisplay logs={selectedRunDetails.logs || []} />
+                    </Box>
+                </Box>
+            );
+        }
+
+        // Otherwise show the list of runs
+        return (
+            <Box sx={{ height: '100%', overflow: 'auto', p: 1 }}>
+                {historyLogs.map((run, index) => {
+                    // Extract run metadata from first and last log entries
+                    const firstLog = run[0] || {};
+                    const lastLog = run[run.length - 1] || {};
+                    const runId = firstLog.run_id || `run-${index}`;
+                    const isSelected = runId === selectedRunId;
+                    const timestamp = firstLog.timestamp
+                        ? new Date(firstLog.timestamp * 1000).toLocaleString()
+                        : 'Unknown date';
+                    const status = lastLog.status || 'Unknown';
+                    const isTest = firstLog.is_test_log || false;
+
+                    return (
+                        <Paper
+                            key={runId}
+                            elevation={isSelected ? 3 : 1}
+                            sx={{
+                                p: 1,
+                                mb: 1,
+                                cursor: 'pointer',
+                                border: isSelected ? '1px solid #1976d2' : '1px solid transparent',
+                                backgroundColor: isSelected ? 'rgba(25, 118, 210, 0.08)' : 'white',
+                                '&:hover': {
+                                    backgroundColor: isSelected ? 'rgba(25, 118, 210, 0.12)' : 'rgba(0, 0, 0, 0.04)'
+                                }
+                            }}
+                            onClick={() => fetchRunDetails(runId)}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Box>
+                                    <Typography variant="body2" component="div" fontWeight="medium">
+                                        {isTest && <ScienceIcon fontSize="small" sx={{ mr: 0.5, verticalAlign: 'text-bottom' }} color="info" />}
+                                        Run ID: {runId.substring(0, 8)}...
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                        {timestamp} • {run.length} entries
+                                    </Typography>
+                                </Box>
+                                <Alert
+                                    severity={
+                                        status === 'Success' ? 'success' :
+                                            status === 'Failed' ? 'error' :
+                                                status === 'Pending' ? 'warning' : 'info'
+                                    }
+                                    sx={{ py: 0, px: 1, minWidth: '100px' }}
+                                    icon={false}
+                                >
+                                    {status}
+                                </Alert>
+                            </Box>
+                        </Paper>
+                    );
+                })}
+            </Box>
+        );
+    };
+
     return (
         <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
             {/* Left Node Palette Drawer */}
@@ -1766,20 +1990,106 @@ function WorkflowEditor() {
                     </ReactFlow>
                 </Box>
 
-                {/* Log Panel at Bottom */}
-                <Paper
-                    elevation={3}
-                    square
-                    sx={{
-                        height: `${logPanelHeight}px`,
-                        width: '100%',
-                        overflow: 'hidden',
-                        boxSizing: 'border-box',
-                        flexShrink: 0,
-                    }}
-                >
-                    <LogDisplay logs={runLogs} />
-                </Paper>
+                {/* Log Panel with Draggable Header */}
+                <Box sx={{ position: 'relative' }}>
+                    {/* Drag Handle */}
+                    <Box
+                        sx={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: '8px',
+                            backgroundColor: isDraggingLogPanel ? '#1976d2' : '#f0f0f0',
+                            cursor: 'ns-resize',
+                            zIndex: 1,
+                            display: 'flex',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            '&:hover': {
+                                backgroundColor: '#e0e0e0'
+                            }
+                        }}
+                        onMouseDown={handleLogPanelDragStart}
+                    >
+                        <DragIndicatorIcon
+                            sx={{
+                                fontSize: 16,
+                                color: isDraggingLogPanel ? 'white' : 'grey.500',
+                                transform: 'rotate(90deg)'
+                            }}
+                        />
+                    </Box>
+
+                    {/* Log Panel Container */}
+                    <Paper
+                        elevation={3}
+                        square
+                        sx={{
+                            height: `${logPanelHeight}px`,
+                            width: '100%',
+                            overflow: 'hidden',
+                            boxSizing: 'border-box',
+                            flexShrink: 0,
+                            pt: '8px', // Make room for the drag handle
+                        }}
+                    >
+                        {/* Log Panel Header */}
+                        <Box sx={{ borderBottom: 1, borderColor: 'divider', mx: 1 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Tabs
+                                    value={logTabValue}
+                                    onChange={handleLogTabChange}
+                                    aria-label="log tabs"
+                                    sx={{ minHeight: '40px' }}
+                                >
+                                    <Tab
+                                        label="Live Logs"
+                                        id="logs-tab-0"
+                                        aria-controls="logs-tabpanel-0"
+                                        sx={{ minHeight: '40px', py: 0 }}
+                                    />
+                                    <Tab
+                                        label="Run History"
+                                        id="logs-tab-1"
+                                        aria-controls="logs-tabpanel-1"
+                                        sx={{ minHeight: '40px', py: 0 }}
+                                        icon={<HistoryIcon fontSize="small" />}
+                                        iconPosition="start"
+                                    />
+                                </Tabs>
+                                <IconButton
+                                    size="small"
+                                    onClick={handleRefreshLogs}
+                                    disabled={isLoadingHistoryLogs}
+                                    title="Refresh logs"
+                                >
+                                    <RefreshIcon fontSize="small" />
+                                </IconButton>
+                            </Box>
+                        </Box>
+
+                        {/* Tab Panels */}
+                        <Box
+                            role="tabpanel"
+                            hidden={logTabValue !== 0}
+                            id="logs-tabpanel-0"
+                            aria-labelledby="logs-tab-0"
+                            sx={{ height: 'calc(100% - 40px)' }}
+                        >
+                            {logTabValue === 0 && <LogDisplay logs={runLogs} />}
+                        </Box>
+                        <Box
+                            role="tabpanel"
+                            hidden={logTabValue !== 1}
+                            id="logs-tabpanel-1"
+                            aria-labelledby="logs-tab-1"
+                            sx={{ height: 'calc(100% - 40px)' }}
+                        >
+                            {logTabValue === 1 && renderHistoryLogs()}
+                        </Box>
+                    </Paper>
+                </Box>
             </Box>
 
             {/* Node Configuration Panel (Modal) */}
