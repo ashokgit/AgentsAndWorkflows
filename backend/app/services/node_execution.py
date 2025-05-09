@@ -54,7 +54,7 @@ def execute_node(node: Node, input_data: Any, workflow: Workflow, run_outputs: D
         elif node_type == 'api_consumer':
             output_data = execute_api_consumer_node(node, input_data, run_outputs)
         elif node_type == 'model_config':
-            output_data = execute_model_config_node(node_data, input_data)
+            output_data = input_data #As this node is not executed, it should pass the input through
         else:
             logger.warning(f"Node {node.id} ({node_label}): Unknown node type '{node_type}'. Passing input through.")
             output_data = input_data # Pass data through for unknown types
