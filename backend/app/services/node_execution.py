@@ -17,6 +17,9 @@ from app.utils.persistence import webhook_payloads
 from litellm import completion as litellm_completion
 from litellm import acompletion as litellm_acompletion
 
+# Define the name of the code executor Docker container
+CODE_EXECUTOR_CONTAINER_NAME = "workflow-code-executor"
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -613,16 +616,16 @@ def execute_code_node(node_data: Dict[str, Any], input_data: Any) -> Any:
 
 async def test_code_node_in_docker(code: str, input_data: Dict[str, Any], requirements: Optional[str], timeout_seconds: int = 60) -> Dict[str, Any]:
     """
-    Executes Python code in the dedicated code-executor container.
+    Executes Python code in the dedicated code-executor container, passing input via STDIN.
     """
-    logger.info(f"Attempting to test code in code-executor container. Code snippet: {code[:100]}...")
+    logger.info(f"Attempting to test code in code-executor container via STDIN. Code snippet: {code[:100]}...")
     
-    tmp_dir = None
+    tmp_dir = None # Keep tmp_dir for requirements.txt if needed
     try:
-        tmp_dir = tempfile.mkdtemp()
-        logger.debug(f"Created temporary directory for code execution: {tmp_dir}")
-
-        # 1. Create main.py (user's code, wrapped to handle input/output)
+        # Convert input_data to JSON string to be passed via STDIN
+        input_json_str = json.dumps(input_data)
+        
+        # 1. Create main.py (user's code, wrapped to handle input/output from STDIN)
         main_py_content = f"""
 import json
 import sys
@@ -638,116 +641,195 @@ if __name__ == '__main__':
     error_details = {{}}
 
     try:
-        with open('input.json', 'r') as f:
-            input_payload = json.load(f)
-    except FileNotFoundError:
-        error_details = {{"error": "input.json not found", "details": "The input data file was not correctly created."}}
-        error_occurred = True
+        # Read input from STDIN
+        stdin_data = sys.stdin.read()
+        if not stdin_data:
+            # Handle case where STDIN is empty, though subprocess.run input should provide it
+            # This might indicate an issue with how data is piped.
+            input_payload = {{}} # Default to empty if no STDIN, or raise error
+            logger.warning("Code executor: STDIN was empty. Using empty input_payload.")
+        else:
+            input_payload = json.loads(stdin_data)
+            
     except json.JSONDecodeError as e:
-        error_details = {{"error": "Invalid JSON in input.json", "details": str(e)}}
+        error_details = {{"error": "Invalid JSON from STDIN", "details": str(e)}}
+        error_occurred = True
+    except Exception as e_stdin: # Catch other potential errors during STDIN processing
+        error_details = {{"error": "Error processing STDIN", "details": str(e_stdin)}}
         error_occurred = True
 
+
     if error_occurred:
+        # Output error as JSON to STDOUT so it can be captured
         print(json.dumps({{"status": "error", "error": error_details.get("error"), "details": error_details.get("details")}}))
-        sys.exit(0)
+        sys.exit(0) # Exit cleanly for Docker, actual error is in JSON
 
     try:
         if 'execute' not in globals() and 'execute' not in locals():
             raise NameError("Function 'execute(input_data)' is not defined in the provided code.")
 
-        result = execute(input_payload)
+        result = execute(input_payload) # Pass the loaded payload
         print(json.dumps({{"status": "success", "result": result}}))
 
     except Exception as e:
-        print(json.dumps({{
+        print(json.dumps({{\
             "status": "error", 
             "error": f"Error during Python code execution: {{str(e)}}",
             "error_type": type(e).__name__,
         }}))
     finally:
+        # Ensure a clean exit for Docker; result/error is captured from STDOUT
         sys.exit(0)
 """
-        with open(os.path.join(tmp_dir, 'main.py'), 'w') as f:
+        # Create a temporary directory if requirements are provided or for main.py
+        # This part can be simplified if requirements are also handled differently or not present.
+        # For now, we keep it for housing main.py and potentially requirements.txt.
+        tmp_dir = tempfile.mkdtemp()
+        logger.debug(f"Created temporary directory for code execution artifacts: {tmp_dir}")
+
+        main_py_path = os.path.join(tmp_dir, "main.py")
+        with open(main_py_path, "w") as f:
             f.write(main_py_content)
-        logger.debug(f"Created main.py in {tmp_dir}")
+        logger.debug(f"Created main.py at {main_py_path}")
 
-        # 2. Create input.json
-        with open(os.path.join(tmp_dir, 'input.json'), 'w') as f:
-            json.dump(input_data, f)
-        logger.debug(f"Created input.json in {tmp_dir}")
-
-        # 3. Create requirements.txt if provided
+        # 2. Create requirements.txt if provided
+        requirements_txt_path = None
         if requirements:
-            with open(os.path.join(tmp_dir, 'requirements.txt'), 'w') as f:
+            requirements_txt_path = os.path.join(tmp_dir, "requirements.txt")
+            with open(requirements_txt_path, "w") as f:
                 f.write(requirements)
-            logger.debug(f"Created requirements.txt in {tmp_dir}")
+            logger.debug(f"Created requirements.txt at {requirements_txt_path}")
 
-        # 4. Copy files to the code-executor container
-        copy_command = ["docker", "cp", tmp_dir + "/.", "workflow-code-executor:/app/"]
-        copy_process = subprocess.run(copy_command, capture_output=True, text=True)
-        
-        if copy_process.returncode != 0:
-            logger.error(f"Failed to copy files to code-executor container: {copy_process.stderr}")
-            return {
-                "status": "error",
-                "error": "Failed to copy files to code-executor container",
-                "details": copy_process.stderr
-            }
+        # Define container paths
+        container_app_dir = "/app"
+        container_main_py = f"{container_app_dir}/main.py"
+        container_requirements_txt = f"{container_app_dir}/requirements.txt" if requirements else None
 
-        # 5. Install requirements if provided
-        if requirements:
-            install_command = ["docker", "exec", "workflow-code-executor", "pip", "install", "-r", "/app/requirements.txt"]
-            install_process = subprocess.run(install_command, capture_output=True, text=True)
+        # 3. Copy files to the Docker container
+        # Copy main.py
+        # Ensure main.py is executable by the user inside the container if needed, though python execution doesn't require it.
+        cmd_cp_main = ["docker", "cp", main_py_path, f"{CODE_EXECUTOR_CONTAINER_NAME}:{container_main_py}"]
+        subprocess.run(cmd_cp_main, check=True, capture_output=True)
+        logger.debug(f"Copied main.py to {CODE_EXECUTOR_CONTAINER_NAME}:{container_main_py}")
+
+        if requirements_txt_path and container_requirements_txt:
+            cmd_cp_req = ["docker", "cp", requirements_txt_path, f"{CODE_EXECUTOR_CONTAINER_NAME}:{container_requirements_txt}"]
+            subprocess.run(cmd_cp_req, check=True, capture_output=True)
+            logger.debug(f"Copied requirements.txt to {CODE_EXECUTOR_CONTAINER_NAME}:{container_requirements_txt}")
             
-            if install_process.returncode != 0:
-                logger.error(f"Failed to install requirements: {install_process.stderr}")
-                return {
-                    "status": "error",
-                    "error": "Failed to install requirements",
-                    "details": install_process.stderr
-                }
+            # Install requirements
+            # It's important that the user running this can write to the site-packages or a local venv
+            # For simplicity, assuming global install within the container as root or a user with write access.
+            # The Dockerfile for code-executor should set up a user/permissions appropriately if not root.
+            # We should also consider if requirements installation should happen every time or if it can be cached.
+            # For now, installing every time for simplicity.
+            install_command = [
+                "docker", "exec", CODE_EXECUTOR_CONTAINER_NAME,
+                "pip", "install", "-r", container_requirements_txt, "--user" # Install to user site-packages
+            ]
+            logger.info(f"Installing requirements from {container_requirements_txt} in {CODE_EXECUTOR_CONTAINER_NAME}")
+            pip_process = subprocess.run(install_command, capture_output=True, text=True, timeout=120) # Increased timeout for pip
+            if pip_process.returncode != 0:
+                logger.error(f"Pip install failed. STDOUT: {pip_process.stdout} STDERR: {pip_process.stderr}")
+                return {"status": "error", "error": "Failed to install requirements", "details": pip_process.stderr or pip_process.stdout}
+            logger.info(f"Pip install successful. STDOUT: {pip_process.stdout}")
 
-        # 6. Execute the code
-        exec_command = ["docker", "exec", "workflow-code-executor", "python", "/app/main.py"]
+
+        # 4. Execute the code in Docker, passing input_json_str via STDIN
+        exec_command = [
+            "docker", "exec", "-i", # -i is crucial for passing STDIN
+            CODE_EXECUTOR_CONTAINER_NAME,
+            "python", container_main_py 
+        ]
+        logger.info(f"Executing code in {CODE_EXECUTOR_CONTAINER_NAME} with STDIN. Command: {' '.join(exec_command)}")
+        
         try:
+            # Pass input_json_str to the process's STDIN
             exec_process = subprocess.run(
                 exec_command,
+                input=input_json_str, # Pass the JSON string as input
                 capture_output=True,
-                text=True,
-                timeout=timeout_seconds
+                text=True, # Decodes stdout/stderr as text
+                timeout=timeout_seconds,
+                check=False # We will check return code and parse output manually
             )
             
-            # Parse the output
-            try:
-                result_json = json.loads(exec_process.stdout)
-                return result_json
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON output: {e}")
+            # Log stdout/stderr regardless of success for debugging
+            logger.debug(f"Code execution STDOUT: {exec_process.stdout}")
+            if exec_process.stderr:
+                logger.warning(f"Code execution STDERR: {exec_process.stderr}")
+
+            # The Python script (main_py_content) is designed to always exit with 0
+            # and print a JSON to STDOUT. So, we primarily parse STDOUT.
+            # A non-zero exit from `docker exec` itself would indicate a deeper issue.
+
+            if exec_process.returncode != 0:
+                # This might happen if `python main.py` itself crashes before our try/except in main.py
+                # or if `docker exec` command fails.
+                logger.error(f"Docker exec command returned non-zero exit code: {exec_process.returncode}. STDERR: {exec_process.stderr}")
                 return {
                     "status": "error",
-                    "error": "Failed to parse execution result",
-                    "details": f"Output was not valid JSON. STDOUT: {exec_process.stdout[:1000]}"
+                    "error": "Docker execution command failed",
+                    "details": exec_process.stderr or f"Docker exec exited with {exec_process.returncode}"
+                }
+
+            # Parse the output from the script's STDOUT
+            try:
+                # Handle cases where stdout might be empty or not JSON
+                if not exec_process.stdout.strip():
+                    logger.error("Code execution produced no STDOUT. This is unexpected.")
+                    return {
+                        "status": "error",
+                        "error": "Execution produced no output",
+                        "details": exec_process.stderr or "The script's STDOUT was empty."
+                    }
+                
+                result_json = json.loads(exec_process.stdout)
+                # Log the actual result from the user's code perspective
+                if result_json.get("status") == "success":
+                    logger.info(f"Code execution successful via STDIN. Result preview: {str(result_json.get('result'))[:100]}...")
+                else:
+                    logger.warning(f"Code execution reported failure via STDIN. Error: {result_json.get('error')}, Details: {result_json.get('details')}")
+                return result_json
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON output from script: {e}. Raw STDOUT: {exec_process.stdout[:1000]}")
+                return {
+                    "status": "error",
+                    "error": "Failed to parse execution result from script",
+                    "details": f"Output was not valid JSON. STDOUT: {exec_process.stdout[:1000]}. STDERR: {exec_process.stderr}"
                 }
 
         except subprocess.TimeoutExpired:
-            logger.warning(f"Code execution timed out after {timeout_seconds} seconds")
+            logger.warning(f"Code execution timed out after {timeout_seconds} seconds (STDIN method)")
             return {
                 "status": "error",
                 "error": f"Code execution timed out after {timeout_seconds} seconds"
             }
-        except Exception as e:
-            logger.error(f"Error executing code: {e}")
+        except subprocess.CalledProcessError as e: # Should be caught by check=False and manual check now
+            logger.error(f"Error during Docker command execution (CalledProcessError): {e}. Output: {e.output}, Stderr: {e.stderr}")
             return {
                 "status": "error",
-                "error": "Failed to execute code",
+                "error": "Failed to execute code in Docker (CalledProcessError)",
+                "details": str(e.stderr) or str(e.output) or str(e)
+            }
+        except Exception as e: # Catch-all for other subprocess or docker issues
+            logger.error(f"General error executing code in Docker (STDIN method): {e}", exc_info=True)
+            return {
+                "status": "error",
+                "error": "Failed to execute code in Docker due to an unexpected issue",
                 "details": str(e)
             }
 
+    except FileNotFoundError as e: # e.g. if 'docker' command is not found
+        logger.error(f"Docker command not found: {e}. Ensure Docker CLI is installed and in PATH.", exc_info=True)
+        # Re-raise a more specific error or return a structured error
+        return {"status": "error", "error": "Docker command not found", "details": str(e)}
+
     except Exception as e:
-        logger.error(f"Outer error during code execution setup: {e}", exc_info=True)
+        logger.error(f"Outer error during code execution setup (STDIN method): {e}", exc_info=True)
         return {
             "status": "error",
-            "error": "An unexpected error occurred during code test setup",
+            "error": "An unexpected error occurred during code test setup (STDIN method)",
             "details": str(e)
         }
     finally:
@@ -758,6 +840,8 @@ if __name__ == '__main__':
             except Exception as e_clean:
                 logger.error(f"Failed to remove temporary directory {tmp_dir}: {e_clean}")
 
+    # Fallback, should ideally be handled by one of the return paths above
+    logger.error("Reached end of test_code_node_in_docker function unexpectedly (STDIN method).")
     return {"status": "error", "error": "Reached end of code execution function unexpectedly."}
 
 async def generate_code_with_llm(
