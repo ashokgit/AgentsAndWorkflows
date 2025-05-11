@@ -52,7 +52,7 @@ def load_workflows_from_disk():
                 serialized_workflows = json.load(f)
                 # Convert dicts back to Workflow objects
                 for k, v in serialized_workflows.items():
-                    workflows_db[k] = Workflow.parse_obj(v)
+                    workflows_db[k] = Workflow.model_validate(v)
             logger.info(f"Loaded {len(workflows_db)} workflows from {workflows_file}")
         
         # Load runs data
