@@ -487,6 +487,9 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
     });
     const [waitingForWebhookData, setWaitingForWebhookData] = useState(false);
     const [testDataSending, setTestDataSending] = useState(false);
+    const [aiInstruction, setAiInstruction] = useState('');
+    const [aiGeneratingCode, setAiGeneratingCode] = useState(false);
+    const [aiModelConfigId, setAiModelConfigId] = useState('');
 
     useEffect(() => {
         if (!open) return;
@@ -494,6 +497,9 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
         // Initialize form data from node
         if (node) {
             setFormData({ ...node.data });
+            // Reset AI specific fields when node changes
+            setAiInstruction('');
+            setAiModelConfigId(node.data?.ai_model_config_id || ''); // Load if previously saved
 
             // Check if this node is waiting for webhook data during testing
             if (node.type === 'webhook_trigger' && node.data?.status === 'Waiting') {
@@ -523,6 +529,9 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
         setJsonValidity({ headers: true, body: true });
         // Clear errors when node changes
         setFieldErrors({});
+        // Reset AI model config if not part of node.data or when node changes to a new one
+        // Only set from node.data if it exists, otherwise keep local state (or clear)
+        setAiModelConfigId(initialData.ai_model_config_id || '');
     }, [node]);
 
     const isValidJson = (str) => {
@@ -734,6 +743,183 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
         }
     };
 
+    // New handler for testing code nodes
+    const handleTestCode = async () => {
+        if (!node || node.type !== 'code') return;
+
+        if (!formData.code) {
+            setFieldErrors(prev => ({ ...prev, code: 'Code is required for testing.' }));
+            // Display error directly in the form if needed, or rely on panel's error display
+            setTestState({
+                loading: false,
+                result: null,
+                error: 'Code is required for testing.'
+            });
+            return;
+        }
+
+        setTestState({
+            loading: true,
+            result: null,
+            error: null
+        });
+
+        try {
+            // Prepare input data from connected nodes
+            const incomingEdges = edges.filter(edge => edge.target === node.id);
+            const inputNodesDetails = incomingEdges.map(edge =>
+                nodes.find(n => n.id === edge.source)
+            ).filter(Boolean);
+
+            let executionInputData = {};
+            inputNodesDetails.forEach(inputNode => {
+                if (inputNode.data?.last_output) {
+                    executionInputData[inputNode.id] = inputNode.data.last_output;
+                } else if (inputNode.type === 'webhook_trigger' && inputNode.data?.last_payload) {
+                    executionInputData[inputNode.id] = inputNode.data.last_payload;
+                }
+                // Potentially handle other node types or default to node.data
+            });
+
+            const response = await axios.post('/api/node/code/test', {
+                code: formData.code,
+                input_data: executionInputData, // Send collected input data
+                requirements: formData.requirements || '', // Send requirements
+                node_id: node.id // Optional: send node_id if backend needs it for context
+            }, {
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                validateStatus: false
+            });
+
+            if (response.data.status === 'success') {
+                setTestState({
+                    loading: false,
+                    result: response.data.result, // Assuming backend returns result directly
+                    error: null
+                });
+                onUpdate(node.id, {
+                    testSuccess: true,
+                    status: 'success',
+                    // last_output: response.data.result // Optionally update last_output from test
+                });
+            } else {
+                setTestState({
+                    loading: false,
+                    result: null,
+                    error: response.data.error || 'Test failed'
+                });
+                onUpdate(node.id, {
+                    testSuccess: false,
+                    status: 'failed'
+                });
+            }
+        } catch (error) {
+            setTestState({
+                loading: false,
+                result: null,
+                error: error.response?.data?.detail || error.message || 'Code execution test failed'
+            });
+            onUpdate(node.id, {
+                testSuccess: false,
+                status: 'failed'
+            });
+        }
+    };
+
+    const handleAiInstructionChange = (event) => {
+        setAiInstruction(event.target.value);
+    };
+
+    const handleAiModelConfigIdChange = (event) => {
+        const newModelConfigId = event.target.value;
+        setAiModelConfigId(newModelConfigId);
+        // Persist this choice to the node's data immediately
+        onUpdate(node.id, { 'ai_model_config_id': newModelConfigId });
+    };
+
+    const handleGenerateCodeWithAI = async () => {
+        if (!node || node.type !== 'code' || !aiInstruction) return;
+
+        setAiGeneratingCode(true);
+        setTestState({ result: null, error: null }); // Clear previous test results/errors
+
+        try {
+            // 1. Gather Available Inputs Schema
+            const incomingEdges = edges.filter(edge => edge.target === node.id);
+            const inputNodesDetails = incomingEdges.map(edge =>
+                nodes.find(n => n.id === edge.source)
+            ).filter(Boolean);
+
+            const availableInputsSchema = {};
+            inputNodesDetails.forEach(inputNode => {
+                let exampleData = {};
+                if (inputNode.data?.last_output) {
+                    exampleData = inputNode.data.last_output;
+                } else if (inputNode.type === 'webhook_trigger' && inputNode.data?.last_payload) {
+                    exampleData = inputNode.data.last_payload;
+                } else {
+                    // Provide a generic placeholder if no actual data is available
+                    exampleData = { [`${inputNode.data?.label || inputNode.type}_data`]: "(Example data from this node)" };
+                }
+                availableInputsSchema[inputNode.id] = {
+                    node_name: inputNode.data?.label || inputNode.type,
+                    node_type: inputNode.type,
+                    // Provide a sample of the data structure to the AI
+                    // For simplicity, sending the actual data if small, or just keys/types for larger data
+                    // For now, let's send the first level keys as an example
+                    data_structure_sample: Object.keys(exampleData).reduce((acc, key) => {
+                        acc[key] = typeof exampleData[key];
+                        return acc;
+                    }, {})
+                };
+            });
+
+            const payload = {
+                available_inputs_schema: availableInputsSchema,
+                current_code: formData.code || '',
+                user_instruction: aiInstruction,
+                node_id: node.id,
+                model_config_id: aiModelConfigId,
+                workflow_nodes: nodes
+            };
+
+            console.log("Sending request to /api/node/code/generate with payload:", payload);
+
+            const response = await axios.post('/api/node/code/generate', payload, {
+                headers: { 'Content-Type': 'application/json' },
+                validateStatus: false
+            });
+
+            if (response.data.status === 'success' && response.data.generated_code) {
+                // Create a synthetic event to update formData.code via handleChange and then onBlur
+                const syntheticEvent = {
+                    target: {
+                        name: 'code',
+                        value: response.data.generated_code
+                    }
+                };
+                handleChange(syntheticEvent); // Update local form state
+                handleBlur(syntheticEvent);   // Trigger save/update to the node
+                setAiInstruction(''); // Clear instruction field after successful generation
+                setTestState({ result: { "message": "AI generated code successfully. Please review and test." }, error: null });
+
+            } else {
+                const errorMsg = response.data.error || 'AI code generation failed.';
+                console.error("AI Code Generation Error:", errorMsg, response.data.details);
+                setTestState({ result: null, error: errorMsg + (response.data.details ? ` Details: ${response.data.details}` : '') });
+            }
+
+        } catch (error) {
+            console.error("Exception during AI code generation:", error);
+            const errorMsg = error.response?.data?.detail || error.message || 'An unexpected error occurred during AI code generation.';
+            setTestState({ result: null, error: errorMsg });
+        } finally {
+            setAiGeneratingCode(false);
+        }
+    };
+
     // Helper function to send test data
     const handleSendTestData = async () => {
         if (!formData.webhook_id) return;
@@ -781,6 +967,8 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
     const renderFormContent = () => {
         if (!node) return null;
 
+        const modelConfigNodes = nodes.filter(n => n.type === 'model_config');
+
         const commonTextFieldProps = {
             variant: "outlined",
             size: "small",
@@ -822,6 +1010,15 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                     commonTextFieldProps={commonTextFieldProps}
                     NodeInputSelector={NodeInputSelector}
                     DraggableTextField={DraggableTextField}
+                    handleTestCode={handleTestCode}
+                    testState={testState}
+                    aiInstruction={aiInstruction}
+                    onAiInstructionChange={handleAiInstructionChange}
+                    handleGenerateCodeWithAI={handleGenerateCodeWithAI}
+                    aiGeneratingCode={aiGeneratingCode}
+                    aiModelConfigId={aiModelConfigId}
+                    onAiModelConfigIdChange={handleAiModelConfigIdChange}
+                    modelConfigNodes={modelConfigNodes}
                 />;
             case 'api_consumer':
                 return <ApiConsumerForm
@@ -1037,6 +1234,36 @@ function NodeConfigPanel({ node, onUpdate, onClose, open, nodes, onCreateEdge, o
                                     {!node?.data?.last_output && !testState.result && !testState.error && (
                                         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                                             No output data available. Run a test to see results here.
+                                        </Typography>
+                                    )}
+                                    {/* Display testState for code nodes as well */}
+                                    {node?.type === 'code' && testState.result && (
+                                        <Paper sx={{ p: 2, bgcolor: '#f5f7ff', mt: 1, maxHeight: '300px', overflow: 'auto' }}>
+                                            <Typography variant="caption" color="textSecondary">Test Result:</Typography>
+                                            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                                {typeof testState.result === 'object'
+                                                    ? JSON.stringify(testState.result, null, 2)
+                                                    : String(testState.result)}
+                                            </pre>
+                                        </Paper>
+                                    )}
+                                    {node?.type === 'code' && testState.error && (
+                                        <Paper sx={{ p: 2, bgcolor: '#ffeef0', mt: 1, maxHeight: '300px', overflow: 'auto' }}>
+                                            <Typography variant="caption" color="error">Test Error:</Typography>
+                                            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#d32f2f' }}>
+                                                {testState.error}
+                                            </pre>
+                                        </Paper>
+                                    )}
+                                    {!node?.data?.last_output && !testState.result && !testState.error && node?.type !== 'code' && (
+                                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                            No output data available. Run a test to see results here.
+                                        </Typography>
+                                    )}
+                                    {/* Adjust message for code node if no last_output and no test results */}
+                                    {!node?.data?.last_output && !testState.result && !testState.error && node?.type === 'code' && (
+                                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                            No output data available. Write and test your code, or run the workflow to see results here.
                                         </Typography>
                                     )}
                                 </>

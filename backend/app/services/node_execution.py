@@ -7,10 +7,15 @@ from typing import Any, Dict, Optional, List
 import base64
 from urllib.parse import urlencode
 import re # Added for templating
+import shutil # For directory operations
+import tempfile # For temporary directories
+import subprocess # For running Docker commands
+import uuid # For unique naming
 
 from app.models.workflow import Node, Workflow, NodeExecutionResult
 from app.utils.persistence import webhook_payloads
 from litellm import completion as litellm_completion
+from litellm import acompletion as litellm_acompletion
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -605,3 +610,305 @@ def execute_code_node(node_data: Dict[str, Any], input_data: Any) -> Any:
     except Exception as e:
         logger.error(f"Code node execution error: {e}", exc_info=True)
         raise ValueError(f"Code execution failed: {str(e)}") 
+
+async def test_code_node_in_docker(code: str, input_data: Dict[str, Any], requirements: Optional[str], timeout_seconds: int = 60) -> Dict[str, Any]:
+    """
+    Executes Python code in the dedicated code-executor container.
+    """
+    logger.info(f"Attempting to test code in code-executor container. Code snippet: {code[:100]}...")
+    
+    tmp_dir = None
+    try:
+        tmp_dir = tempfile.mkdtemp()
+        logger.debug(f"Created temporary directory for code execution: {tmp_dir}")
+
+        # 1. Create main.py (user's code, wrapped to handle input/output)
+        main_py_content = f"""
+import json
+import sys
+import os
+
+# --- User's Python code starts ---
+{code}
+# --- User's Python code ends ---
+
+if __name__ == '__main__':
+    input_payload = {{}}
+    error_occurred = False
+    error_details = {{}}
+
+    try:
+        with open('input.json', 'r') as f:
+            input_payload = json.load(f)
+    except FileNotFoundError:
+        error_details = {{"error": "input.json not found", "details": "The input data file was not correctly created."}}
+        error_occurred = True
+    except json.JSONDecodeError as e:
+        error_details = {{"error": "Invalid JSON in input.json", "details": str(e)}}
+        error_occurred = True
+
+    if error_occurred:
+        print(json.dumps({{"status": "error", "error": error_details.get("error"), "details": error_details.get("details")}}))
+        sys.exit(0)
+
+    try:
+        if 'execute' not in globals() and 'execute' not in locals():
+            raise NameError("Function 'execute(input_data)' is not defined in the provided code.")
+
+        result = execute(input_payload)
+        print(json.dumps({{"status": "success", "result": result}}))
+
+    except Exception as e:
+        print(json.dumps({{
+            "status": "error", 
+            "error": f"Error during Python code execution: {{str(e)}}",
+            "error_type": type(e).__name__,
+        }}))
+    finally:
+        sys.exit(0)
+"""
+        with open(os.path.join(tmp_dir, 'main.py'), 'w') as f:
+            f.write(main_py_content)
+        logger.debug(f"Created main.py in {tmp_dir}")
+
+        # 2. Create input.json
+        with open(os.path.join(tmp_dir, 'input.json'), 'w') as f:
+            json.dump(input_data, f)
+        logger.debug(f"Created input.json in {tmp_dir}")
+
+        # 3. Create requirements.txt if provided
+        if requirements:
+            with open(os.path.join(tmp_dir, 'requirements.txt'), 'w') as f:
+                f.write(requirements)
+            logger.debug(f"Created requirements.txt in {tmp_dir}")
+
+        # 4. Copy files to the code-executor container
+        copy_command = ["docker", "cp", tmp_dir + "/.", "workflow-code-executor:/app/"]
+        copy_process = subprocess.run(copy_command, capture_output=True, text=True)
+        
+        if copy_process.returncode != 0:
+            logger.error(f"Failed to copy files to code-executor container: {copy_process.stderr}")
+            return {
+                "status": "error",
+                "error": "Failed to copy files to code-executor container",
+                "details": copy_process.stderr
+            }
+
+        # 5. Install requirements if provided
+        if requirements:
+            install_command = ["docker", "exec", "workflow-code-executor", "pip", "install", "-r", "/app/requirements.txt"]
+            install_process = subprocess.run(install_command, capture_output=True, text=True)
+            
+            if install_process.returncode != 0:
+                logger.error(f"Failed to install requirements: {install_process.stderr}")
+                return {
+                    "status": "error",
+                    "error": "Failed to install requirements",
+                    "details": install_process.stderr
+                }
+
+        # 6. Execute the code
+        exec_command = ["docker", "exec", "workflow-code-executor", "python", "/app/main.py"]
+        try:
+            exec_process = subprocess.run(
+                exec_command,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds
+            )
+            
+            # Parse the output
+            try:
+                result_json = json.loads(exec_process.stdout)
+                return result_json
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON output: {e}")
+                return {
+                    "status": "error",
+                    "error": "Failed to parse execution result",
+                    "details": f"Output was not valid JSON. STDOUT: {exec_process.stdout[:1000]}"
+                }
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Code execution timed out after {timeout_seconds} seconds")
+            return {
+                "status": "error",
+                "error": f"Code execution timed out after {timeout_seconds} seconds"
+            }
+        except Exception as e:
+            logger.error(f"Error executing code: {e}")
+            return {
+                "status": "error",
+                "error": "Failed to execute code",
+                "details": str(e)
+            }
+
+    except Exception as e:
+        logger.error(f"Outer error during code execution setup: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "error": "An unexpected error occurred during code test setup",
+            "details": str(e)
+        }
+    finally:
+        if tmp_dir and os.path.exists(tmp_dir):
+            try:
+                shutil.rmtree(tmp_dir)
+                logger.debug(f"Removed temporary directory {tmp_dir}")
+            except Exception as e_clean:
+                logger.error(f"Failed to remove temporary directory {tmp_dir}: {e_clean}")
+
+    return {"status": "error", "error": "Reached end of code execution function unexpectedly."}
+
+async def generate_code_with_llm(
+    available_inputs_schema: Dict[str, Any], 
+    current_code: Optional[str], 
+    user_instruction: str,
+    model_config_id: Optional[str] = None, # New parameter
+    workflow_nodes: Optional[List[Dict[str, Any]]] = None # New parameter
+) -> Dict[str, Any]:
+    """
+    Generates Python code using an LLM based on available inputs, current code, and user instruction.
+    The generated code should define a function: def execute(input_data):
+    """
+    logger.info(f"Initiating AI code generation. Instruction: {user_instruction[:100]}...")
+
+    # Construct a detailed prompt for the LLM
+    prompt_parts = []
+    prompt_parts.append("You are an expert Python coding assistant. Your task is to generate or update a Python script for a workflow automation node.")
+    prompt_parts.append("The script MUST define a single function with the exact signature: `def execute(input_data):`")
+    prompt_parts.append("This function will receive a dictionary `input_data` containing outputs from upstream nodes.")
+
+    if available_inputs_schema:
+        prompt_parts.append("\nHere's a description of the `input_data` structure you can expect, keyed by upstream node ID:")
+        for node_id, schema_info in available_inputs_schema.items():
+            input_description = f"  - Node '{schema_info.get('node_name', node_id)}' (ID: {node_id}, Type: {schema_info.get('node_type', 'N/A')}):\n"
+            input_description += f"    Its output will be available as `input_data['{node_id}']`.\n"
+            input_description += f"    Sample data structure: {json.dumps(schema_info.get('data_structure_sample', {}), indent=2)}"
+            prompt_parts.append(input_description)
+        prompt_parts.append("For example, to access data from a node named 'Webhook Data' with ID 'node_abc', you would use `input_data['node_abc']`.")
+    else:
+        prompt_parts.append("The `input_data` dictionary will likely be empty as no upstream inputs are connected or have sample data.")
+
+    prompt_parts.append("\nUser's instruction for the code to be generated/updated:")
+    prompt_parts.append(f"'''{user_instruction}'''")
+
+    if current_code and current_code.strip():
+        prompt_parts.append("\nThis is the current code in the editor. Please try to modify or build upon it if relevant to the instruction. If the instruction is entirely new, you can replace it:")
+        prompt_parts.append("```python")
+        prompt_parts.append(current_code)
+        prompt_parts.append("```")
+    else:
+        prompt_parts.append("\nThere is no existing code in the editor. Please generate the new code based on the instruction.")
+    
+    prompt_parts.append("\nPlease provide ONLY the complete Python code for the `execute` function and any necessary helper functions or imports within the script. Do not include any explanatory text before or after the code block.")
+    prompt_parts.append('The function must return a value (e.g., a dictionary, a string, a number). Example return: `{"summary": "summary_text", "data_processed": True}`')
+    prompt_parts.append("Ensure all necessary imports are included at the top of the script.")
+
+    final_prompt = "\n".join(prompt_parts)
+    logger.debug(f"Generated LLM Prompt:\n{final_prompt}")
+
+    # LLM Configuration (you might want to make this more configurable, e.g., from settings or model_config node)
+    # For now, using a common default. Ensure OPENAI_API_KEY is set in your environment or handled by litellm.
+    llm_model = os.environ.get("DEFAULT_CODE_GENERATION_MODEL", "gpt-3.5-turbo") 
+    api_key = os.environ.get("OPENAI_API_KEY") # LiteLLM will pick this up
+    custom_api_base = os.environ.get("OPENAI_API_BASE") # If using a custom base
+    resolved_model_config_name = "environment default"
+
+    if model_config_id and workflow_nodes:
+        found_config = None
+        for node_dict in workflow_nodes:
+            if node_dict.get('id') == model_config_id and node_dict.get('type') == 'model_config':
+                found_config = node_dict.get('data', {})
+                break
+        
+        if found_config:
+            logger.info(f"Using model configuration '{found_config.get('config_name', model_config_id)}' for AI code generation.")
+            llm_model = found_config.get('model', llm_model)
+            # API key from model_config overrides environment if present and non-empty
+            config_api_key = found_config.get('api_key')
+            if config_api_key:
+                api_key = config_api_key
+            # API base from model_config overrides environment if present and non-empty
+            config_api_base = found_config.get('api_base')
+            if config_api_base:
+                custom_api_base = config_api_base
+            resolved_model_config_name = found_config.get('config_name', model_config_id)
+        else:
+            logger.warning(f"Model configuration ID '{model_config_id}' provided but not found in workflow_nodes. Falling back to defaults.")
+
+    # Ensure api_key is not None before passing to litellm if required by the model provider
+    # LiteLLM can sometimes work without an explicit key if it's configured for a proxy or certain local models.
+    if not api_key and not os.environ.get("AZURE_API_KEY"): # Check common LiteLLM env vars
+         logger.warning(f"No API key found for LLM (model: {llm_model}, config: '{resolved_model_config_name}'). Code generation might fail or use a default free model if available.")
+
+    messages = [
+        {"role": "system", "content": "You are an expert Python coding assistant tasked with generating a Python script for a workflow node."}, # System prompt can be simpler here as details are in user prompt
+        {"role": "user", "content": final_prompt}
+    ]
+
+    try:
+        logger.info(f"Calling LLM ({llm_model}) for code generation...")
+        response = await litellm_acompletion(
+            model=llm_model,
+            messages=messages,
+            api_key=api_key, # Pass explicitly if fetched
+            api_base=custom_api_base, # Pass explicitly if fetched
+            temperature=0.2, # Lower temperature for more deterministic code
+            max_tokens=1500 # Adjust as needed
+        )
+        
+        generated_code_raw = response.choices[0].message.content
+        logger.debug(f"Raw LLM response: {generated_code_raw}")
+
+        # Post-process the generated code: extract code from markdown triple backticks if present
+        match = re.search(r"```python\n(.*?)\n```", generated_code_raw, re.DOTALL)
+        if match:
+            generated_code = match.group(1).strip()
+        else:
+            # If no markdown block, assume the whole response is code, but warn if it contains common conversational phrases
+            if any(phrase in generated_code_raw.lower() for phrase in ["here is the code", "certainly,", "sure,"]):
+                 logger.warning("LLM response might contain conversational text outside a markdown block. Attempting to use as is.")
+            generated_code = generated_code_raw.strip()
+
+        # Basic validation: Does it contain "def execute(input_data):"?
+        if "def execute(input_data):" not in generated_code:
+            logger.warning("Generated code does not contain 'def execute(input_data):'. LLM might have misunderstood.")
+            # Fallback: Try to wrap the code if it seems like a simple script body
+            if not any(kw in generated_code for kw in ["def ", "class "]) and generated_code.count('\n') > 0:
+                logger.info("Attempting to wrap the generated snippet into an execute function.")
+                indented_generated_code = "    " + generated_code.replace('\n', '\n    ')
+                generated_code = f"""import json
+import os
+
+def execute(input_data):
+    # Code generated by AI, review carefully
+    # Assuming the generated code should be indented under this function
+{indented_generated_code}
+    return {{'message': 'AI generated code executed, please verify output.'}}"""
+            else:
+                 return {
+                    "status": "error",
+                    "error": "Generated code is missing the required `def execute(input_data):` function definition.",
+                    "details": "The AI did not produce the expected function structure. Please try rephrasing your instruction."
+                }
+
+        logger.info(f"Successfully generated code. Snippet: {generated_code[:100]}...")
+        return {
+            "status": "success",
+            "generated_code": generated_code
+        }
+
+    except Exception as e:
+        logger.error(f"LLM call failed during code generation: {e}", exc_info=True)
+        error_message = str(e)
+        if "auth" in error_message.lower():
+             error_message = "Authentication failed with the LLM provider. Check your API key and configuration."
+        elif "rate limit" in error_message.lower():
+            error_message = "LLM rate limit exceeded. Please try again later."
+        
+        return {
+            "status": "error",
+            "error": f"Failed to generate code using LLM: {error_message}",
+            "details": type(e).__name__
+        } 
