@@ -11,6 +11,7 @@ services:
     volumes:
       - ./backend:/app
       - workflow-data:/app/data # Add this volume for persistent data storage
+      - /var/run/docker.sock:/var/run/docker.sock # Mount Docker socket
     # Optional: Add environment variables if needed
     # environment:
     #   - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
@@ -38,6 +39,16 @@ services:
     networks:
       - workflow-net
 
+  code-executor:
+    image: python:3.9-slim
+    container_name: workflow-code-executor
+    volumes:
+      - code-executor-data:/app/data
+    networks:
+      - workflow-net
+    # Keep the container running
+    command: tail -f /dev/null
+
 networks:
   workflow-net:
     driver: bridge
@@ -45,3 +56,4 @@ networks:
 # Define volumes for persistent data
 volumes:
   workflow-data: # Named volume for workflow and webhook data
+  code-executor-data:
