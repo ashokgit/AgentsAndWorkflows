@@ -1,4 +1,4 @@
-# Mini Workflow Engine: Automate Your Business with Visual Ease!
+# Agents & Wrokflows, A Mini Workflow Engine: a super minimal n8n alternative!
 
 **Unlock powerful automation for your business with the Mini Workflow Engine!** This intuitive, n8n-like tool empowers you to design, manage, and execute complex workflows through a stunning drag-and-drop visual editor. Say goodbye to tedious manual tasks and hello to streamlined efficiency.
 
