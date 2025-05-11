@@ -46,9 +46,8 @@ Simply `docker-compose up -d` to get started.
 
 ## Contributing
 
-We welcome contributions! Please see `CONTRIBUTING.md` for details on how to contribute, submit bug reports, or request features. (You'll need to create this file).
+We welcome contributions! Please see `CONTRIBUTING.md` for details on how to contribute, submit bug reports, or request features.
 
 ## License
 
-This project is licensed under the [YOUR CHOSEN LICENSE HERE] - see the `LICENSE` file for details. (You'll need to create this file and choose a license).
-
+This project is licensed under the **MIT License** - see the `LICENSE` file for details.
