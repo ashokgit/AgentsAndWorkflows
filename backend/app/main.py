@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,8 +13,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    # Code here runs on startup
+    logger.info("Starting Mini Workflow Engine Backend...")
+    load_workflows_from_disk()
+    logger.info(f"Loaded {get_storage_summary()}")
+    yield
+    # Code here runs on shutdown (if any)
+    logger.info("Mini Workflow Engine Backend shutting down...")
+
 # Create FastAPI application
-app = FastAPI(title="Mini Workflow Engine Backend")
+app = FastAPI(title="Mini Workflow Engine Backend", lifespan=lifespan)
 
 # Configure CORS
 app.add_middleware(
@@ -31,14 +42,6 @@ app.include_router(router)
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the Mini Workflow Engine Backend!"}
-
-# Startup event
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Starting Mini Workflow Engine Backend...")
-    # Load data from disk
-    load_workflows_from_disk()
-    logger.info(f"Loaded {get_storage_summary()}")
 
 # Main entry point
 if __name__ == "__main__":

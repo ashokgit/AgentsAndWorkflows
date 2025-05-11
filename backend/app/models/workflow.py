@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -29,24 +29,16 @@ class Workflow(BaseModel):
     # Timestamp when last tested successfully
     last_tested: Optional[datetime] = None
     
-    class Config:
-        # Allow arbitrary types for data fields
-        arbitrary_types_allowed = True
-        
-        # Custom JSON encoders
-        json_encoders = {
-            datetime: lambda dt: dt.isoformat(),
-        }
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        # json_encoders for datetime is often handled by default in Pydantic V2
+        # or can be customized with @serializer if specific logic is needed beyond default ISO format.
+    )
     
     def dict(self, **kwargs):
         """Custom dict method to handle nested serialization"""
         result = super().dict(**kwargs)
         return result
-        
-    @classmethod
-    def parse_obj(cls, obj):
-        """Custom parse method to handle nested deserialization"""
-        return super().parse_obj(obj)
 
 class NodeExecutionResult(BaseModel):
     output: Any
