@@ -23,4 +23,15 @@ A minimal n8n-like workflow automation tool with a visual editor.
 
 ## Setup
 
-(Instructions TBD) 
+Everything is setup and configured for docker
+
+Simply `docker-compose up -d` to get started.
+
+## Contributing
+
+We welcome contributions! Please see `CONTRIBUTING.md` for details on how to contribute, submit bug reports, or request features. (You'll need to create this file).
+
+## License
+
+This project is licensed under the [YOUR CHOSEN LICENSE HERE] - see the `LICENSE` file for details. (You'll need to create this file and choose a license).
+
