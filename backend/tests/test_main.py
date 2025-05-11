@@ -3,6 +3,8 @@ from unittest.mock import patch, MagicMock # Added MagicMock
 from app.main import app # Corrected import path
 from app.models.workflow import Workflow, Node, Edge # Added workflow models
 from app.utils.persistence import workflows_db # Added for test setup/teardown
+import os # Add os import for creating mock file paths if needed by test logic directly
+import json # Add json import for creating mock file content if needed by test logic directly
 
 client = TestClient(app)
 
@@ -225,4 +227,137 @@ def test_toggle_workflow_active_endpoint(mock_save_disk):
     assert workflows_db[sample_workflow_id].is_active is False
     assert mock_save_disk.call_count == 3 # Called for deactivation
 
-    workflows_db.clear() 
+    workflows_db.clear()
+
+@patch('app.routes.workflows.get_run_logs')
+@patch('app.routes.workflows.save_workflows_to_disk') # For initial workflow save
+def test_get_workflow_runs_endpoint(mock_save_disk, mock_get_run_logs):
+    workflows_db.clear()
+    sample_workflow_id = "wf-get-runs"
+    sample_workflow = create_sample_workflow_model(id=sample_workflow_id)
+    client.post("/api/workflows", json=sample_workflow.model_dump()) # Save workflow
+    mock_save_disk.assert_called_once()
+
+    # Mock the service function
+    expected_runs_data = [
+        {"run_id": "run1", "status": "completed", "timestamp": "2023-01-01T12:00:00Z"},
+        {"run_id": "run2", "status": "failed", "timestamp": "2023-01-02T12:00:00Z"}
+    ]
+    mock_get_run_logs.return_value = expected_runs_data
+
+    # Test successful case
+    response = client.get(f"/api/workflows/{sample_workflow_id}/runs?limit=10&include_archived=true")
+    assert response.status_code == 200
+    assert response.json() == expected_runs_data
+    mock_get_run_logs.assert_called_once_with(sample_workflow_id, 10, True)
+
+    # Test with different query parameters
+    mock_get_run_logs.reset_mock()
+    response_custom_params = client.get(f"/api/workflows/{sample_workflow_id}/runs?limit=5&include_archived=false")
+    assert response_custom_params.status_code == 200
+    mock_get_run_logs.assert_called_once_with(sample_workflow_id, 5, False)
+
+    # Test for non-existent workflow
+    mock_get_run_logs.reset_mock()
+    response_not_found = client.get("/api/workflows/non-existent-wf/runs")
+    assert response_not_found.status_code == 404
+    assert response_not_found.json()["detail"] == "Workflow not found"
+    mock_get_run_logs.assert_not_called() # Should not be called if workflow doesn't exist
+    
+    workflows_db.clear()
+
+# Test cases for GET /api/workflows/{workflow_id}/runs/{run_id}
+# Reduced to 4 decorators, will patch runs_dir inside with a context manager
+@patch('app.routes.workflows.os')
+@patch('app.routes.workflows.workflow_runs', new_callable=dict)
+@patch('app.routes.workflows.json')
+@patch('app.routes.workflows.save_workflows_to_disk') # Innermost
+def test_get_workflow_run_by_id_endpoint(mock_save_disk, mock_json, mock_workflow_runs, mock_os):
+    # Setup: Ensure workflows_db is clean and then add a test workflow
+    workflows_db.clear()
+    sample_workflow_id = "wf-get-run-by-id"
+    sample_run_id = "run-abc-123"
+    sample_workflow = create_sample_workflow_model(id=sample_workflow_id)
+    
+    fixed_mock_runs_dir = "mock_runs_dir" # Define this for use inside the test
+
+    with patch('app.routes.workflows.runs_dir', fixed_mock_runs_dir):
+        client.post("/api/workflows", json=sample_workflow.model_dump()) # This populates workflows_db
+        mock_save_disk.assert_called_once() # from initial save
+
+        # --- Scenario 1: Workflow not found ---
+        response_wf_not_found = client.get(f"/api/workflows/non-existent-wf/runs/{sample_run_id}")
+        assert response_wf_not_found.status_code == 404
+        assert response_wf_not_found.json()["detail"] == "Workflow not found"
+
+        # --- Scenario 2: Run found in memory (workflow_runs) ---
+        mock_workflow_runs.clear() # Ensure clean state for this mock
+        log_entry_mem = {"run_id": sample_run_id, "message": "Log from memory"}
+        mock_workflow_runs[sample_workflow_id] = [[log_entry_mem]] # Note the nested list structure
+        
+        response_mem = client.get(f"/api/workflows/{sample_workflow_id}/runs/{sample_run_id}")
+        assert response_mem.status_code == 200
+        assert response_mem.json() == {
+            "run_id": sample_run_id,
+            "workflow_id": sample_workflow_id,
+            "logs": [log_entry_mem]
+        }
+        mock_workflow_runs.clear() # Clear after test
+
+        # --- Scenario 3: Run not in memory, found in archive ---
+        mock_os.path.join.side_effect = lambda *args: os.path.join(*args)
+        mock_os.path.exists.return_value = True
+        mock_os.listdir.return_value = [f"{sample_run_id}.json", "other_run.json"]
+
+        archived_run_data = {
+            "metadata": {"run_id": sample_run_id, "workflow_id": sample_workflow_id},
+            "logs": [{"message": "Log from archive"}]
+        }
+        mock_file_content = MagicMock()
+        mock_file_content.__enter__.return_value.read.return_value = json.dumps(archived_run_data)
+        mock_open_context = MagicMock(return_value=mock_file_content)
+        mock_json.load.return_value = archived_run_data
+        mock_workflow_runs.clear()
+
+        with patch('builtins.open', mock_open_context): 
+            response_archive = client.get(f"/api/workflows/{sample_workflow_id}/runs/{sample_run_id}")
+        
+        assert response_archive.status_code == 200
+        assert response_archive.json() == archived_run_data
+        mock_os.path.join.assert_any_call(fixed_mock_runs_dir, sample_workflow_id)
+        mock_os.path.join.assert_any_call(os.path.join(fixed_mock_runs_dir, sample_workflow_id), f"{sample_run_id}.json")
+        mock_open_context.assert_called_once_with(os.path.join(fixed_mock_runs_dir, sample_workflow_id, f"{sample_run_id}.json"), 'r')
+        mock_json.load.assert_called_once()
+
+        # --- Scenario 4: Run not found in memory or archive ---
+        mock_workflow_runs.clear()
+        mock_os.listdir.return_value = ["other_run.json"]
+        mock_json.load.reset_mock()
+        mock_open_context.reset_mock()
+
+        response_not_found_anywhere = client.get(f"/api/workflows/{sample_workflow_id}/runs/{sample_run_id}")
+        assert response_not_found_anywhere.status_code == 404
+        assert response_not_found_anywhere.json()["detail"] == "Run not found"
+        mock_json.load.assert_not_called()
+
+        # --- Scenario 5: Workflow run directory does not exist for archive lookup ---
+        mock_workflow_runs.clear()
+        # Ensure os.path.exists for the specific workflow run directory path returns False
+        # The mock_os.path.exists needs to be more specific or reset for this case.
+        # For simplicity, we'll make it return False now for the relevant call.
+        def side_effect_exists(path_to_check):
+            if path_to_check == os.path.join(fixed_mock_runs_dir, sample_workflow_id):
+                return False # This is the crucial check for the workflow run directory
+            return True # Default to True for other checks if any
+        mock_os.path.exists.side_effect = side_effect_exists
+        mock_os.listdir.reset_mock()
+        mock_open_context.reset_mock()
+
+        response_no_archive_dir = client.get(f"/api/workflows/{sample_workflow_id}/runs/{sample_run_id}")
+        assert response_no_archive_dir.status_code == 404
+        assert response_no_archive_dir.json()["detail"] == "Run not found"
+        mock_os.listdir.assert_not_called()
+        # mock_open_context might be called if exists returned true for the file path, so ensure it's not.
+        # However, if listdir is not called, open won't be. The primary check is listdir not called.
+        
+    workflows_db.clear() # Final cleanup
