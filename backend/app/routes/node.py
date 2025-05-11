@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Optional
 
 from app.services.node_execution import test_llm_node
 
-router = APIRouter(prefix="/api/node", tags=["node"])
+router = APIRouter(prefix="/api/node", tags=["test"])
 
 @router.post("/llm/test")
 async def test_llm_node_endpoint(

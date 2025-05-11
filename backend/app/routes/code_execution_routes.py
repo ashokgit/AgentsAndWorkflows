@@ -36,7 +36,7 @@ class AICodeGenerationResponse(BaseModel):
     error: Optional[str] = None
     details: Optional[str] = None
 
-@router.post("/node/code/test", response_model=CodeTestResponse, tags=["Node Execution Testing"])
+@router.post("/node/code/test", response_model=CodeTestResponse, tags=["test"])
 async def test_code_execution_endpoint(payload: CodeTestPayload = Body(...)):
     """
     Receives Python code, input data, and requirements, then executes it
@@ -69,7 +69,7 @@ async def test_code_execution_endpoint(payload: CodeTestPayload = Body(...)):
         logger.error(f"Unhandled exception in /node/code/test endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred on the server: {str(e)}")
 
-@router.post("/node/code/generate", response_model=AICodeGenerationResponse, tags=["Node Execution Testing"])
+@router.post("/node/code/generate", response_model=AICodeGenerationResponse, tags=["test"])
 async def generate_code_with_ai_endpoint(payload: AICodeGenerationPayload = Body(...)):
     logger.info(f"Received AI code generation request for node: {payload.node_id or 'N/A'}. Instruction: {payload.user_instruction[:100]}...")
     try:

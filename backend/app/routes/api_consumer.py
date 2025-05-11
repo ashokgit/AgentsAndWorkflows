@@ -3,7 +3,7 @@ from typing import Dict, Any
 
 from app.services.api_consumer_service import test_api_connection
 
-router = APIRouter(prefix="/api/api_consumer", tags=["api_consumer"])
+router = APIRouter(prefix="/api/api_consumer", tags=["test"])
 
 @router.post("/test")
 async def test_api_connection_endpoint(api_config: Dict[str, Any]):

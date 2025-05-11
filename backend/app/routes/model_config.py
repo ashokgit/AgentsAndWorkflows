@@ -3,7 +3,7 @@ from typing import Dict, Any
 
 from app.services.model_config_service import test_model_config
 
-router = APIRouter(prefix="/api/model_config", tags=["model_config"])
+router = APIRouter(prefix="/api/model_config", tags=["test"])
 
 @router.post("/test")
 async def test_model_config_endpoint(model_config: Dict[str, Any]):
