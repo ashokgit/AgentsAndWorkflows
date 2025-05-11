@@ -21,6 +21,21 @@ A minimal n8n-like workflow automation tool with a visual editor.
 *   **Frontend:** React (Vite), React Flow
 *   **Database:** (TBD - Likely SQLite or PostgreSQL for persistence)
 
+## Screenshots
+
+Here are some glimpses of the Mini Workflow Engine in action:
+
+*   **Simple Workflow and Logs:**
+    ![Simple Workflow and Logs](./assets/ASimpleWorkflow_And_LogsScreen.png)
+*   **Code Execution Configuration:**
+    ![Code Execution Screen](./assets/CodeExecutionScreen.png)
+*   **Node Configuration:**
+    ![Node Configuration Screen](./assets/NodeConfigurationScreen.png)
+*   **Webhook Setup:**
+    ![Webhook Setup Screen](./assets/WebHookSetupScreen.png)
+*   **Workflow Editing:**
+    ![Editing Screen](./assets/EditingScreen.png)
+
 ## Setup
 
 Everything is setup and configured for docker
