@@ -149,4 +149,80 @@ def test_get_nonexistent_workflow(mock_save_disk):
     response = client.get("/api/workflows/non-existent-id")
     assert response.status_code == 404
     assert response.json()["detail"] == "Workflow not found"
+    workflows_db.clear()
+
+@patch('app.routes.workflows.run_workflow')
+@patch('app.routes.workflows.save_workflows_to_disk')
+def test_run_workflow_endpoint(mock_save_disk, mock_run_workflow):
+    workflows_db.clear()
+    sample_workflow = create_sample_workflow_model(id="wf-run-test")
+    client.post("/api/workflows", json=sample_workflow.model_dump()) # Save it first
+    mock_save_disk.assert_called_once() # From the initial save
+
+    mock_run_workflow.return_value = "test-run-id-123"
+    
+    response = client.post(f"/api/workflows/{sample_workflow.id}/run", json={"input_data": {"key": "value"}})
+    assert response.status_code == 200
+    json_response = response.json()
+    assert json_response["message"] == "Workflow execution started"
+    assert json_response["run_id"] == "test-run-id-123"
+    assert json_response["workflow_id"] == sample_workflow.id
+    mock_run_workflow.assert_called_once_with(sample_workflow.id, {"input_data": {"key": "value"}})
+    workflows_db.clear()
+
+@patch('app.routes.workflows.test_workflow')
+@patch('app.routes.workflows.save_workflows_to_disk')
+def test_test_workflow_endpoint(mock_save_disk, mock_test_workflow):
+    workflows_db.clear()
+    sample_workflow = create_sample_workflow_model(id="wf-test-test")
+    client.post("/api/workflows", json=sample_workflow.model_dump()) # Save it first
+    mock_save_disk.assert_called_once()
+
+    mock_test_workflow.return_value = {"run_id": "test-run-id-456", "workflow_id": sample_workflow.id}
+    
+    response = client.post(f"/api/workflows/{sample_workflow.id}/test", json={"input_data": {"key": "test_value"}})
+    assert response.status_code == 200
+    json_response = response.json()
+    assert json_response["message"] == "Workflow test started"
+    assert json_response["run_id"] == "test-run-id-456"
+    assert json_response["workflow_id"] == sample_workflow.id
+    mock_test_workflow.assert_called_once_with(sample_workflow.id, {"input_data": {"key": "test_value"}})
+    workflows_db.clear()
+
+@patch('app.routes.workflows.save_workflows_to_disk')
+def test_toggle_workflow_active_endpoint(mock_save_disk):
+    workflows_db.clear()
+    sample_workflow_id = "wf-toggle-test"
+    sample_workflow = create_sample_workflow_model(id=sample_workflow_id)
+    
+    # Save workflow (mock_save_disk will be called here)
+    client.post("/api/workflows", json=sample_workflow.model_dump())
+    assert mock_save_disk.call_count == 1
+
+    # 1. Try to activate untested workflow (should fail)
+    response_activate_fail = client.post(f"/api/workflows/{sample_workflow_id}/toggle_active", json={"active": True})
+    assert response_activate_fail.status_code == 400
+    assert "Cannot activate workflow that hasn't been successfully tested" in response_activate_fail.json()["detail"]
+    assert not workflows_db[sample_workflow_id].is_active
+    assert mock_save_disk.call_count == 1 # save_workflows_to_disk not called for failed activation
+
+    # 2. Mark as tested and then activate
+    workflows_db[sample_workflow_id].tested = True # Manually mark as tested for this test scenario
+    # No need to call client.post to save this .tested change for the purpose of this toggle test
+
+    response_activate_success = client.post(f"/api/workflows/{sample_workflow_id}/toggle_active", json={"active": True})
+    assert response_activate_success.status_code == 200
+    assert response_activate_success.json()["message"] == f"Workflow {sample_workflow_id} activated"
+    assert response_activate_success.json()["is_active"] is True
+    assert workflows_db[sample_workflow_id].is_active is True
+    assert mock_save_disk.call_count == 2 # Called for successful activation
+
+    # 3. Deactivate
+    response_deactivate = client.post(f"/api/workflows/{sample_workflow_id}/toggle_active", json={"active": False})
+    assert response_deactivate.status_code == 200
+    assert response_deactivate.json()["message"] == f"Workflow {sample_workflow_id} deactivated"
+    assert response_deactivate.json()["is_active"] is False
+    assert workflows_db[sample_workflow_id].is_active is False
+    assert mock_save_disk.call_count == 3 # Called for deactivation
+
     workflows_db.clear() 

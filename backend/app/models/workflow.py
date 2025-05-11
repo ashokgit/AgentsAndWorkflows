@@ -37,7 +37,7 @@ class Workflow(BaseModel):
     
     def dict(self, **kwargs):
         """Custom dict method to handle nested serialization"""
-        result = super().dict(**kwargs)
+        result = super().model_dump(**kwargs)
         return result
 
 class NodeExecutionResult(BaseModel):
