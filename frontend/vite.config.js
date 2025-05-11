@@ -34,5 +34,10 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/webhooks/, '/webhooks') 
       }
     }
-  }
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/setupTests.js', // Or .ts if you prefer TypeScript
+  },
 }) 

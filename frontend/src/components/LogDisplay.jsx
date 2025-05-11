@@ -203,7 +203,9 @@ function LogDisplay({ logs }) {
                                 }}
                             >
                                 <Tooltip title="Click to see details">
-                                    <ExpandMoreIcon fontSize="small" />
+                                    <span>
+                                        <ExpandMoreIcon fontSize="small" />
+                                    </span>
                                 </Tooltip>
                             </Box>
                         )}
@@ -244,7 +246,9 @@ function LogDisplay({ logs }) {
                                 <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1, overflow: 'hidden' }}>
                                     {isTest && (
                                         <Tooltip title="Test Run Log">
-                                            <ScienceIcon color="info" sx={{ fontSize: 16, mr: 0.5 }} />
+                                            <span>
+                                                <ScienceIcon color="info" sx={{ fontSize: 16, mr: 0.5 }} />
+                                            </span>
                                         </Tooltip>
                                     )}
                                     <Typography variant="caption" sx={{ mr: 1, color: 'text.secondary' }}>
