@@ -2,9 +2,10 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock # Added MagicMock
 from app.main import app # Corrected import path
 from app.models.workflow import Workflow, Node, Edge # Added workflow models
-from app.utils.persistence import workflows_db # Added for test setup/teardown
+from app.utils.persistence import workflows_db, webhook_registry, webhook_payloads, webhook_mapping, active_webhooks_expecting_test_data # Added webhook stores
 import os # Add os import for creating mock file paths if needed by test logic directly
 import json # Add json import for creating mock file content if needed by test logic directly
+import uuid # For mocking uuid.uuid4
 
 client = TestClient(app)
 
@@ -361,3 +362,231 @@ def test_get_workflow_run_by_id_endpoint(mock_save_disk, mock_json, mock_workflo
         # However, if listdir is not called, open won't be. The primary check is listdir not called.
         
     workflows_db.clear() # Final cleanup
+
+# --- Webhook Tests --- 
+
+@patch('app.routes.webhooks.save_webhooks_to_disk')
+@patch('uuid.uuid4') # To control the generated webhook_id for predictable paths
+def test_register_webhook_and_list_registry(mock_uuid, mock_save_disk):
+    workflows_db.clear()
+    webhook_registry.clear()
+    webhook_mapping.clear()
+    webhook_payloads.clear()
+
+    # Setup a mock workflow
+    sample_workflow_id = "wf-for-webhook"
+    workflows_db[sample_workflow_id] = create_sample_workflow_model(id=sample_workflow_id) # Use existing helper
+
+    # Mock UUID
+    mock_generated_uuid = "test-webhook-uuid-123"
+    mock_uuid.return_value = mock_generated_uuid
+
+    # 1. Successful registration
+    node_id = "node-webhook-1"
+    payload_register = {"workflow_id": sample_workflow_id, "node_id": node_id}
+    response_register = client.post("/api/webhooks/register", json=payload_register)
+    assert response_register.status_code == 200 # Endpoint spec says 200, not 201
+    register_data = response_register.json()
+    expected_internal_path = f"/api/webhooks/wh_{sample_workflow_id}_{node_id}"
+    assert register_data["webhook_url"] == expected_internal_path
+    assert register_data["webhook_id"] == mock_generated_uuid
+    assert register_data["workflow_id"] == sample_workflow_id
+    assert register_data["node_id"] == node_id
+    mock_save_disk.assert_called_once()
+
+    assert expected_internal_path in webhook_registry
+    assert webhook_registry[expected_internal_path]["workflow_id"] == sample_workflow_id
+    assert webhook_registry[expected_internal_path]["node_id"] == node_id
+    assert webhook_registry[expected_internal_path]["webhook_id"] == mock_generated_uuid
+    assert mock_generated_uuid in webhook_mapping
+    assert webhook_mapping[mock_generated_uuid]["internal_path"] == expected_internal_path
+    assert expected_internal_path in webhook_payloads # Should be initialized
+    assert webhook_payloads[expected_internal_path] == []
+
+    # 2. List registry
+    response_registry = client.get("/api/webhooks/registry")
+    assert response_registry.status_code == 200
+    assert response_registry.json() == {expected_internal_path: webhook_registry[expected_internal_path]}
+
+    # 3. Registration with missing workflow_id
+    response_missing_wf = client.post("/api/webhooks/register", json={"node_id": "some_node"})
+    assert response_missing_wf.status_code == 400
+    assert "workflow_id and node_id are required" in response_missing_wf.json()["detail"]
+
+    # 4. Registration for non-existent workflow
+    response_wf_not_found = client.post("/api/webhooks/register", json={"workflow_id": "non-existent-wf", "node_id": "some_node"})
+    assert response_wf_not_found.status_code == 404
+    assert "Workflow non-existent-wf not found" in response_wf_not_found.json()["detail"]
+
+    workflows_db.clear()
+    webhook_registry.clear()
+    webhook_mapping.clear()
+    webhook_payloads.clear()
+
+@patch('app.routes.webhooks.save_webhooks_to_disk') # save_webhooks_to_disk is not called by these payload endpoints
+def test_webhook_payload_management(mock_save_disk_not_used):
+    workflows_db.clear()
+    webhook_registry.clear()
+    webhook_payloads.clear()
+    webhook_mapping.clear()
+
+    # Setup: Register a webhook first to interact with its payloads
+    sample_workflow_id = "wf-payload-test"
+    node_id = "node-payload-1"
+    workflows_db[sample_workflow_id] = create_sample_workflow_model(id=sample_workflow_id)
+    
+    # Use a known UUID for simplicity, direct registration populates registry
+    mock_uuid_for_payload = "payload-uuid"
+    internal_path_segment = f"wh_{sample_workflow_id}_{node_id}"
+    full_internal_path = f"/api/webhooks/{internal_path_segment}"
+
+    webhook_registry[full_internal_path] = {
+        "workflow_id": sample_workflow_id, 
+        "node_id": node_id,
+        "webhook_id": mock_uuid_for_payload
+    }
+    webhook_payloads[full_internal_path] = [] # Initialize
+
+    # 1. Get payloads for non-existent webhook specific path
+    response_get_non_existent = client.get("/api/webhooks/wh_non_existent/payloads")
+    assert response_get_non_existent.status_code == 404
+
+    # 2. Get initial (empty) payloads for existing webhook
+    response_get_empty = client.get(f"/api/webhooks/{internal_path_segment}/payloads")
+    assert response_get_empty.status_code == 200
+    assert response_get_empty.json() == []
+
+    # Simulate a payload being added (normally done by the callback handler)
+    sample_payload_data = {"key": "value", "timestamp": "some_time"}
+    webhook_payloads[full_internal_path].append(sample_payload_data)
+
+    # 3. Get payloads after one is added
+    response_get_with_data = client.get(f"/api/webhooks/{internal_path_segment}/payloads")
+    assert response_get_with_data.status_code == 200
+    assert response_get_with_data.json() == [sample_payload_data]
+
+    # 4. Clear payloads
+    response_clear = client.delete(f"/api/webhooks/{internal_path_segment}/payloads")
+    assert response_clear.status_code == 200
+    assert response_clear.json()["message"] == f"All payloads cleared for {full_internal_path}"
+    assert webhook_payloads[full_internal_path] == []
+
+    # 5. Delete payloads for non-existent webhook specific path
+    response_delete_non_existent = client.delete("/api/webhooks/wh_non_existent/payloads")
+    assert response_delete_non_existent.status_code == 404
+
+    # No save_webhooks_to_disk calls expected by these specific endpoints
+    mock_save_disk_not_used.assert_not_called()
+
+    workflows_db.clear()
+    webhook_registry.clear()
+    webhook_payloads.clear()
+    webhook_mapping.clear()
+
+@patch('app.routes.webhooks.save_webhooks_to_disk')
+@patch('app.routes.webhooks.workflow_service.run_workflow')
+@patch('app.routes.webhooks.workflow_service.signal_webhook_data_for_test')
+@patch('uuid.uuid4')
+def test_handle_internal_webhook_callback(mock_uuid, mock_signal_test, mock_run_workflow, mock_save_disk):
+    workflows_db.clear()
+    webhook_registry.clear()
+    webhook_mapping.clear()
+    webhook_payloads.clear()
+    active_webhooks_expecting_test_data.clear()
+
+    sample_workflow_id = "wf-callback-test"
+    node_id_active = "node-active"
+    node_id_inactive = "node-inactive"
+    mock_uuid.return_value = "fixed-uuid-for-callback"
+
+    # Create one active and one inactive workflow (or just one, and toggle its state)
+    active_workflow = create_sample_workflow_model(id=sample_workflow_id, name="Active Callback WF")
+    active_workflow.is_active = True # Mark workflow as active
+    # Ensure the node_id_active is actually part of this workflow for run_workflow to be triggered
+    active_workflow.nodes.append(Node(id=node_id_active, type="webhookNode", position={"x":100, "y":100}, data={}))
+    workflows_db[sample_workflow_id] = active_workflow
+
+    # --- Scenario A: Basic Payload Reception & Storage ---
+    # Register a webhook for the active node
+    client.post("/api/webhooks/register", json={"workflow_id": sample_workflow_id, "node_id": node_id_active})
+    mock_save_disk.reset_mock() # Reset from registration call
+    
+    internal_path_segment = f"wh_{sample_workflow_id}_{node_id_active}"
+    full_internal_path = f"/api/webhooks/{internal_path_segment}"
+
+    # A1: POST JSON payload
+    json_payload_data = {"event": "created", "data": {"id": 123, "value": "test json"}}
+    response_post_json = client.post(full_internal_path, json=json_payload_data)
+    assert response_post_json.status_code == 200
+    assert response_post_json.json()["message"] == "Webhook received and workflow triggered (or auto-registered)."
+    assert full_internal_path in webhook_payloads
+    # The endpoint stores a dict with payload, timestamp, method for the *path*, not a list of payloads anymore.
+    # Based on reading webhook.py: webhook_payloads[webhook_specific_path] = { ... }
+    stored_payload_info_json = webhook_payloads[internal_path_segment] # Path segment is key for webhook_payloads
+    assert stored_payload_info_json["payload"] == json_payload_data
+    assert stored_payload_info_json["method"] == "post"
+    assert "timestamp" in stored_payload_info_json
+    mock_run_workflow.assert_called_with(workflow_id=sample_workflow_id, input_data=json_payload_data, node_id=node_id_active)
+    mock_run_workflow.reset_mock()
+
+    # A2: GET with query params
+    query_params_payload = {"event": "queried", "id": "abc"}
+    response_get_query = client.get(full_internal_path, params=query_params_payload)
+    assert response_get_query.status_code == 200
+    assert response_get_query.json()["message"] == "Webhook received and workflow triggered (or auto-registered)."
+    stored_payload_info_get = webhook_payloads[internal_path_segment]
+    assert stored_payload_info_get["payload"] == query_params_payload
+    assert stored_payload_info_get["method"] == "get"
+    mock_run_workflow.assert_called_with(workflow_id=sample_workflow_id, input_data=query_params_payload, node_id=node_id_active)
+    mock_run_workflow.reset_mock()
+
+    # --- Scenario B: Auto-registration (workflow not active or node not runnable) ---
+    # Using a new path that isn't explicitly registered, but workflow exists
+    # Let's assume this workflow isn't active or its node isn't runnable for this sub-test
+    # To simulate this, we can make the workflow inactive temporarily
+    workflows_db[sample_workflow_id].is_active = False 
+    auto_reg_wf_id = sample_workflow_id
+    auto_reg_node_id = "node-auto-reg"
+    auto_reg_path_segment = f"wh_{auto_reg_wf_id}_{auto_reg_node_id}"
+    auto_reg_full_path = f"/api/webhooks/{auto_reg_path_segment}"
+
+    auto_payload = {"auto_key": "auto_val"}
+    response_auto_reg = client.post(auto_reg_full_path, json=auto_payload)
+    assert response_auto_reg.status_code == 200
+    assert response_auto_reg.json()["message"] == "Webhook received (auto-registered). Workflow not triggered (inactive or node not runnable)."
+    assert auto_reg_path_segment in webhook_payloads
+    assert webhook_payloads[auto_reg_path_segment]["payload"] == auto_payload
+    mock_run_workflow.assert_not_called() # Workflow or node was inactive
+    # Auto-registration should call save_webhooks_to_disk if it creates a new entry
+    # The current logic in webhooks.py implies auto-registration adds to webhook_registry and webhook_payloads.
+    # If it adds to webhook_registry, save_webhooks_to_disk will be called.
+    assert mock_save_disk.called # Called due to auto-registration creating a new entry.
+    mock_save_disk.reset_mock()
+    workflows_db[sample_workflow_id].is_active = True # Reset for next tests
+
+    # --- Scenario C: Workflow Triggered (already covered by A with active workflow) ---
+    # This scenario is largely covered by Scenario A if the workflow and node are active.
+
+    # --- Scenario D: Webhook Test Data Reception ---
+    test_data_wf_id = sample_workflow_id
+    test_data_node_id = node_id_active # Use the active node for this
+    test_data_path_segment = f"wh_{test_data_wf_id}_{test_data_node_id}"
+    test_data_full_internal_path = f"/api/webhooks/{test_data_path_segment}"
+    run_id_for_test = "test-run-for-webhook-data"
+
+    active_webhooks_expecting_test_data[test_data_full_internal_path] = run_id_for_test
+    test_payload = {"test_signal": "data_here"}
+
+    response_test_data = client.post(test_data_full_internal_path, json=test_payload)
+    assert response_test_data.status_code == 200
+    assert response_test_data.json()["message"] == "✅ Webhook test data received"
+    assert test_data_path_segment in webhook_payloads
+    assert webhook_payloads[test_data_path_segment]["payload"] == test_payload
+    mock_signal_test.assert_called_once_with(webhook_path=test_data_full_internal_path, node_id=test_data_node_id, data=test_payload)
+    mock_run_workflow.assert_not_called() # run_workflow should not be called when test data is signaled
+
+    active_webhooks_expecting_test_data.clear()
+    workflows_db.clear()
+    webhook_registry.clear()
+    webhook_mapping.clear()
+    webhook_payloads.clear()
